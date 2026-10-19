@@ -1,0 +1,33 @@
+# PyTorch (torch + torchvision) burada YOK.
+#   GPU'lu sürüm özel bir adresten kurulur, bu dosyadan ÖNCE:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128  
+
+# Çalışan sürümleri "pip freeze" ile faz sonunda kayda alacağız tekrarlanabilirlik için.
+
+# --- Algı + takip -------------------------------------------------
+ultralytics>=8.3         # YOLO modelleri + yerleşik takipçiler (ByteTrack, BoT-SORT).
+                         # model.track(..., tracker="bytetrack.yaml") tek satırda takip verir.
+                         # Takipçi YAML ile seçildiğinden "swappable" kuralımız bedavaya gelir.
+lap>=0.5.12              # ByteTrack'in eşleştirme adımı (tespit ↔ iz eşlemesi, Hungarian/LAPJV)
+                         # ultralytics bunu çalışma anında kendisi buraya kurmaya çalışır;
+                         # baştan yazıyoruz ki anında sürpriz şekilde indirme olmasın.
+opencv-python>=4.10      # Video/kare okuma-yazma (Ped2 kareleri .tif), kutu/ID/iz çizme,
+                         # görsel çıktı videosu üretme
+
+# --- Sayısal + geometri -------------------------------------------
+numpy>=1.26              # Tüm sayısal işlemlerin temeli: konum dizileri, hız/ivme farkları.
+shapely>=2.0             # Bölge poligonu: "nokta poligonun içinde mi?", "poligona mesafe".
+                         # Kural kanalının (giriş, oyalanma) geometrik çekirdeği.
+
+# --- Öğrenilmiş model + değerlendirme -------------------------------
+scikit-learn>=1.5        # IsolationForest (Kanal B) + metrikler
+                         # (roc_auc_score, precision/recall). Tek paket iki işi görür.
+
+# --- Kayıt -----------------------------------------------------------
+SQLAlchemy>=2.0          # ORM: olay tablosunu Python sınıfı olarak tanımlarız.
+                         # SQLite Python'la birlikte gelir (sqlite3), ayrıca kurulmaz.
+                         # Backend değişimi = sadece bağlantı adresini (URL) değiştirmek.
+
+# --- Arayüz ----------------------------------------------------------
+PySide6>=6.7             # Qt masaüstü arayüzü: video gösterimi, bölge çizimi, play listesi,
+                         # QThread ile arka planda video işleme.

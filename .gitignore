@@ -1,0 +1,13 @@
+# Sanal ortam ve Python önbelleği
+.venv/
+__pycache__/
+*.pyc
+
+# Büyük / yeniden üretilebilir şeyler
+data/
+weights/
+outputs/
+*.pt
+*.db
+
+CLAUDE.md
