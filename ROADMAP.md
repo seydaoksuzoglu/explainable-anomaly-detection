@@ -9,14 +9,27 @@ Durum: `[ ]` yapılacak · `[~]` devam · `[x]` bitti
       `TestXXX_gt` piksel maskeleri), kare düzeyi etiketler `Test/UCSDped2.m`
 > Çıktı: çalışan ortam + veri yerinde.
 
-## Faz 1 — Algı → yörünge çıkarma  [ ]
-- [ ] YOLO + ByteTrack'i bir test klibinde çalıştır
-- [ ] Her nesne: ID + ayak noktası + kare kare konum kaydı
-- [ ] Kutular + ID + iz çizili görsel video
+## Faz 0b — Ek veri setleri  [ ]
+> Hoca geri bildirimi (2026-10-20): "birkaç veri seti üzerinde çalış". Stretch → çekirdek.
+- [x] UCSD Ped1 (zaten indirildi) → `data/UCSDped1`'e taşı, yapıyı doğrula
+- [~] CUHK Avenue indir, yapıyı doğrula (videolar `data/Avenue`'da; etiket dosyası eksik)
+- [ ] MOT17 indir (yalnız sabit kameralı sekanslar), yapıyı doğrula
+- [ ] ShanghaiTech Campus indir, yapıyı doğrula
+> Çıktı: dört ek veri seti `data/` altında, kare/video okuma her birinde çalışıyor.
+
+## Faz 1 — Algı → yörünge çıkarma  [~]
+- [x] YOLO + ByteTrack'i bir test klibinde çalıştır
+- [~] Her nesne: ID + ayak noktası + kare kare konum kaydı (ayak noktası hazır; CSV kaydı kaldı)
+- [x] Kutular + ID + iz çizili görsel video
+- [x] Video kaynağın gerçek fps'iyle yazılsın + boyuta göre ölçek (hoca: "oynatma yavaş")
+- [~] Hızlı hareket testi: Ped1 + Ped2 + Avenue'nun tüm test klipleri işlendi (69 video,
+      `outputs/<veri seti>/`); MOT17 kaldı. Bulgu: Avenue'da iz ömrü kısa (~1.9 sn) → takipçi
+      tamponu fps'e göre ayarlanmalı.
 > Çıktı: yörünge dosyası (frame, id, class, x, y) + görsel.
 
 ## Faz 2 — Öznitelik çıkarma  [ ]
 - [ ] hız, ivme, yön, yön değişimi, bölgeye mesafe, kalış süresi
+- [ ] hız "saniyede" ölçülsün (veri setlerinin fps'i farklı: 10 / 25 / 30)
 > Çıktı: öznitelik tablosu.
 
 ## Faz 3 — Kanal A: Kural motoru  [ ]
@@ -42,11 +55,12 @@ Durum: `[ ]` yapılacak · `[~]` devam · `[x]` bitti
 
 ## Faz 7 — Değerlendirme  [ ]
 - [ ] Ped2 test + gt ile AUROC, precision/recall, yanlış alarm oranı
+- [ ] aynı ölçüm Ped1, Avenue, ShanghaiTech üzerinde (genelleme)
+- [ ] MOT17'de takip metrikleri (IDF1, MOTA): takip kalitesinin sayısal kanıtı
 - [ ] kural vs Isolation Forest vs füzyon karşılaştırması
 > Çıktı: sonuç tablosu/grafik (raporun yıldızı).
 
 ## Faz 8 — Stretch (vakit kalırsa)  [ ]
 - [ ] LSTM autoencoder + karşılaştırma
-- [ ] ikinci dataset (genelleme testi)
 - [ ] tracker karşılaştırması (ByteTrack vs BoT-SORT → yanlış alarm)
 - [ ] zorlu koşul (düşük ışık) testi

@@ -57,3 +57,16 @@ Windows'ta pip varsayılanı CPU sürümü; RTX 5050 (Blackwell) CUDA ≥12.8 is
 ## Bağımlılıklar: minimum, faz faz
 Seçim: yalnız ROADMAP'teki çekirdek paketler (+ ByteTrack için lap). pandas/matplotlib
 ihtiyaç doğduğu fazda eklenecek. Neden: kapsam disiplini, gereksiz bağımlılık yok.
+
+## Çoklu veri seti (hoca geri bildirimi, 2026-10-20)
+Seçim: Ped2 ana geliştirme seti olarak kalır; Ped1, CUHK Avenue, ShanghaiTech (anomali) ve
+MOT17-sabit kamera (takip) eklenir. Stretch'ten çekirdeğe alındı. Neden: tek veri seti
+genellemeyi göstermez. Roller: Avenue → hızlı hareket + ters yön (Ped2'nin ölçemediği kural);
+MOT17 → takip etiketli, takibi IDF1/MOTA ile sayısal ölçer; ShanghaiTech → çok sahne;
+Ped1 → ucuz ek test. Sonuç: fps ve çözünürlük veri setine göre değişir → hız saniyede,
+görselleştirme ölçeği ve fps kaynaktan okunur (sabit kodlanmaz).
+
+## Görsel video: kaynağın gerçek fps'i
+Seçim: çıktı video kaynağın fps'iyle yazılır; `--fps` yalnız sunum için hızlandırma.
+Neden: sabit 10 fps, 30 fps'lik videoyu 3x ağır çekim yapıyordu (hoca: "oynatma yavaş").
+Hızlandırılmış video gerçek hız gibi sunulmaz; çıktıda "x hızlandırılmış" yazar.
