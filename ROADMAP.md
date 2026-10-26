@@ -9,10 +9,12 @@ Durum: `[ ]` yapılacak · `[~]` devam · `[x]` bitti
       `TestXXX_gt` piksel maskeleri), kare düzeyi etiketler `Test/UCSDped2.m`
 > Çıktı: çalışan ortam + veri yerinde.
 
-## Faz 0b — Ek veri setleri  [ ]
+## Faz 0b — Ek veri setleri  [x]
 > Hoca geri bildirimi (2026-10-20): "birkaç veri seti üzerinde çalış". Stretch → çekirdek.
 - [x] UCSD Ped1 (zaten indirildi) → `data/UCSDped1`'e taşı, yapıyı doğrula
-- [~] CUHK Avenue indir, yapıyı doğrula (videolar `data/Avenue`'da; etiket dosyası eksik)
+- [x] CUHK Avenue indir, yapıyı doğrula → videolar `data/Avenue/testing_videos`, etiketler
+      `data/Avenue/testing_label_mask` (resmî ground_truth_demo.zip; 21/21 video, 15324 kare,
+      3712 anomali karesi = %24.2, kare sayıları videolarla birebir)
 - [x] MOT17 indir (yalnız sabit kameralı sekanslar), yapıyı doğrula → `data/MOT17/train/`
       MOT17-02/04/09-FRCNN (600/1050/525 kare, 30 fps, 1920x1080; 62/83/26 yaya ID)
 - [ ] ShanghaiTech Campus indir, yapıyı doğrula — ERTELENDİ (2026-10-27: çok büyük; vakit kalırsa)
@@ -34,13 +36,17 @@ Durum: `[ ]` yapılacak · `[~]` devam · `[x]` bitti
       Büyük karelerde çizim ölçüleri kare boyuyla orantılı yapıldı (visualize.draw_size).
 > Çıktı: yörünge dosyası (frame, id, class, x, y) + görsel.
 
-## Faz 2 — Öznitelik çıkarma  [ ]
-- [ ] hız, ivme, yön, yön değişimi, bölgeye mesafe, kalış süresi
-- [ ] hız "saniyede" ölçülsün (veri setlerinin fps'i farklı: 10 / 25 / 30)
+## Faz 2 — Öznitelik çıkarma  [x]
+- [x] Adım 2.1: yumuşatma (0.5 sn), hız (piksel/sn + boy/sn), yön, kalış süresi → `src/features.py`
+- [x] Adım 2.2: ivme (işaretli), yön değişimi (°/sn, işaretli, unwrap), izin tek sınıfı (track_class)
+      → `outputs/features/<veriseti>_<klip>.csv`
+- [x] hız "saniyede" ölçülsün (veri setlerinin fps'i farklı: 10 / 25 / 30) → time_s'ten
+- bölgeye mesafe → Faz 3'e taşındı (bölge poligonu orada tanımlanıyor)
 > Çıktı: öznitelik tablosu.
 
 ## Faz 3 — Kanal A: Kural motoru  [ ]
 - [ ] shapely poligon (ilk karede bölge tanımı)
+- [ ] bölgeye mesafe + bölgede kalış süresi (Faz 2'den taşındı)
 - [ ] durum makinesi (dışarıda ↔ içeride) + debounce
 - [ ] oyalanma süresi, ters yön
 > Çıktı: gerekçeli kural alarmları.

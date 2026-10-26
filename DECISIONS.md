@@ -116,3 +116,33 @@ Dizi klasörü: img1 verilse fps okunamaz (10 sanılır, MOT17 30) ve tüm dizil
 Seçim: çizgi kalınlığı, yazı boyu, nokta yarıçapı k = max(1, çıktı yüksekliği / 480) ile çarpılır.
 Neden: ölçüler 480 px (Ped2) için sabitti; 1080 px MOT17'de kutular/ID'ler okunmuyordu.
 max(1, ...): küçük karelerde (Ped, Avenue) çıktı birebir aynı kalır (Ped2'de 180/180 kare aynı).
+
+## Avenue etiketleri: resmî piksel maskeleri → kare etiketi (2026-10-27)
+Seçim: CUHK'nın resmî ground_truth_demo.zip'i (testing_label_mask/N_label.mat, volLabel: kare
+başına 360x640 maske). Kare "anormal" = maskede en az bir anomali pikseli var. volLabel'ın i.
+elemanı = videonun i. karesi (1'den sayım, frame_no ile aynı).
+Neden: resmî kaynak; maskeden türetme literatürde yaygın. Bazı çalışmaların kullandığı hazır kare
+etiket dosyalarıyla sayılar biraz farklı olabilir → raporda belirtilecek.
+Not: 08 ve 18 tamamen, 17 neredeyse tamamen anormal → video başına AUROC tanımsız olur;
+Faz 7'de tüm kareler birleştirilerek (micro) hesaplanacak.
+
+## Öznitelikler: pandas, önce yumuşat sonra türev, hız iki birimde (2026-10-27)
+Seçim: pandas (yeni bağımlılık); konum ve kutu yüksekliği 0.5 sn'lik, zamanda ortalanmış
+pencereyle yumuşatılır; türev np.gradient(x, time_s) ile (eşit olmayan aralıklar → kapanma
+boşlukları doğru); hız speed_px (piksel/sn) ve speed_h (boy/sn = kutu yüksekliğine bölünmüş);
+yön 0–360° (0 sağ, 90 ekranda yukarı), hız < 0.1 boy/sn ise NaN; 10 kareden kısa izler atlanır.
+Neden: türev titremeyi büyütür; pencere saniyede tanımlı → fps'ten bağımsız. Boy/sn perspektifi
+giderir: yaya medyanı Ped2 7.6 px/sn vs MOT17-09 81 px/sn (10 kat), ama 0.25 vs 0.29 boy/sn.
+Ped2 Test001'de bisiklet 1.01 boy/sn, yaya 0.25 → 4 kat ayrışıyor. Eşikler veriden seçilecek
+(beklenen "yürüme ~0.8 boy/sn" ölçülen değerlerle tutmadı). Bölgeye mesafe Faz 3'e taşındı.
+
+## İvme, yön değişimi, izin tek sınıfı (2026-10-27)
+Seçim: ivme = yumuşatılmış hızın türevi, işaretli (+ hızlanma), accel_px ve accel_h; yön değişimi
+= np.unwrap'lı açının türevi (°/sn, + saat yönünün tersi), duran kişide NaN; track_class = izin
+en sık sınıfı (kare bazlı class da kalır).
+Neden: ikinci türev titremeyi iki kez büyütür → hız da bir kez daha yumuşatılır. unwrap olmadan
+359°→1° geçişi −358° sanılır (yapay daire testinde ölçülen 45.0 °/sn = gerçek). Sınıf iz içinde
+değişebiliyor (Ped2 ID 153). Bilinen sınırlılıklar: (1) yön değişimi yavaşta gürültülü: |medyan|
+0.1–0.15 boy/sn'de 46 °/sn, 0.5+ boy/sn'de 18 °/sn → kurallar onu yalnız yeterli hızda kullanmalı;
+(2) Ped2 Test001'de bisiklet izi (139) 67–180 arası sağlam ama sürücü 4 kısa yaya izine bölünmüş
+(153, 223, 268, 335) → araç anomalisini taşıyan iz aracın kendi izi; sürücünün izine güvenilmez.

@@ -18,6 +18,7 @@ opencv-python>=4.10      # Video/kare okuma-yazma (Ped2 kareleri .tif), kutu/ID/
 numpy>=1.26              # Tüm sayısal işlemlerin temeli: konum dizileri, hız/ivme farkları.
 shapely>=2.0             # Bölge poligonu: "nokta poligonun içinde mi?", "poligona mesafe".
                          # Kural kanalının (giriş, oyalanma) geometrik çekirdeği.
+pandas>=2.2              # Öznitelik tablosu: iz başına gruplama, zaman pencereli yumuşatma, CSV
 
 # --- Öğrenilmiş model + değerlendirme -------------------------------
 scikit-learn>=1.5        # IsolationForest (Kanal B) + metrikler
