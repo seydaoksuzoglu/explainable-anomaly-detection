@@ -95,3 +95,24 @@ Neden: takip yavaş (YOLO her karede), öznitelik/kural denemeleri hızlı olmal
 sonraki fazlar CSV'yi okur. time_s: farklı fps'li veri setlerinde hızı saniyede ölçmek için.
 Kutu: hızı kişinin kameraya uzaklığına göre normalleştirmek ve sabit sahte kutuları ayıklamak için.
 Dosya adında veri seti var (Test001 hem Ped1'de hem Ped2'de). CSV: ek paket yok, gözle kontrol edilir.
+
+## Takipçi karşılaştırması çekirdeğe alındı, ShanghaiTech ertelendi (2026-10-27)
+Seçim: takipçi karşılaştırması stretch'ten çekirdeğe (Faz 7, MOT17'de IDF1/MOTA/HOTA).
+ShanghaiTech indirmesi ertelendi (vakit kalırsa).
+Neden: hoca ByteTrack'i sorguladı ve katman ayrımını istedi; karşılaştırma fiilen yapıldı ama
+yalnız vekil ölçütlerle (Avenue'da takip etiketi yok). Seçimi sayısal kanıta bağlamak için
+kimlik etiketli MOT17 şart. ShanghaiTech çok büyük; Ped1/Ped2/Avenue genelleme için şimdilik yeterli.
+
+## MOT17: resmî zip, yalnız sabit kamera dizileri, kaynak = dizi klasörü (2026-10-27)
+Seçim: motchallenge.net'ten MOT17.zip; train'den yalnız 02, 04, 09 (sabit kamera), FRCNN kopyası.
+Kaynak olarak dizi klasörü verilir (`data/MOT17/train/MOT17-02-FRCNN`): kareler img1/'den,
+fps seqinfo.ini'den okunur.
+Neden: test etiketleri gizli (yalnız sunucuda), etiketli olan train; model eğitmediğimiz için
+train'de ölçmek adil. Üç kopyanın (DPM/FRCNN/SDP) görüntü ve gt'si aynı, tespiti kendimiz yapıyoruz.
+Roboflow sürümü tespit veri seti (ID yok, kareler karışık) → takip ölçümüne uygun değil.
+Dizi klasörü: img1 verilse fps okunamaz (10 sanılır, MOT17 30) ve tüm diziler "img1" adını alırdı.
+
+## Görsel çizim ölçüleri kare boyuyla orantılı (2026-10-27)
+Seçim: çizgi kalınlığı, yazı boyu, nokta yarıçapı k = max(1, çıktı yüksekliği / 480) ile çarpılır.
+Neden: ölçüler 480 px (Ped2) için sabitti; 1080 px MOT17'de kutular/ID'ler okunmuyordu.
+max(1, ...): küçük karelerde (Ped, Avenue) çıktı birebir aynı kalır (Ped2'de 180/180 kare aynı).

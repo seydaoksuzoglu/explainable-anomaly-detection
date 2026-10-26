@@ -58,6 +58,16 @@ def scale_for(frame):
     """
     return max(1, round(TARGET_HEIGHT / frame.shape[0]))   # shape[0] = yükseklik
 
+def draw_size(out_height):
+    """Çizim ölçülerinin (çizgi kalınlığı, yazı boyu, nokta) büyütme katsayısı.
+
+    Ölçüler 480 piksel yükseklik için ayarlandı (Ped2'yi 2 kat büyütünce 480 oluyor).
+    Büyük karede aynı ölçüler incecik kalır: 1080 piksellik MOT17'de 1 piksellik çizgi,
+    video ekrana sığdırılınca neredeyse kaybolur. Bu yüzden ölçüleri yükseklikle orantılı
+    büyütüyoruz; küçük karelerde ise küçültmüyoruz (max(1, ...)), yazı okunmaz olmasın.
+        Ped2 (480 çıktı) → 1      Avenue (360) → 1      MOT17 (1080) → 2.25
+    """
+    return max(1.0, out_height / TARGET_HEIGHT)
 
 def draw_tracks(frame, frame_no, tracks, trails, scale):
     """Bir kareye kutuları, ID'leri, ayak noktalarını ve izleri çizer.
@@ -67,33 +77,38 @@ def draw_tracks(frame, frame_no, tracks, trails, scale):
     """
     out = cv2.resize(frame, None, fx=scale, fy=scale) if scale != 1 else frame.copy()
 
+    # Ölçüler çıktı karesinin boyutuna göre (draw_size). k=1 iken eski ölçülerin aynısı.
+    k = draw_size(out.shape[0])
+    line = max(1, round(k))    # cv2 kalınlıkları tam sayı ister
+
     for track_id, name, score, x1, y1, x2, y2 in tracks:
         fx, fy = foot_point(x1, y1, x2, y2)
         trails[track_id].append((int(fx * scale), int(fy * scale)))
 
         is_person = name == "person"
         color = color_for(track_id) if is_person else (0, 0, 255)  # yaya dışı: hep kırmızı
-        thick = 1 if is_person else 2                              # ve kalın, göze çarpsın
+        thick = line if is_person else 2 * line                    # ve kalın, göze çarpsın
 
         # İz: ardışık ayak noktalarını çizgiyle birleştir
         pts = trails[track_id]
         for a, b in zip(pts, list(pts)[1:]):
-            cv2.line(out, a, b, color, 1)
+            cv2.line(out, a, b, color, line)
 
         # Kutu
         cv2.rectangle(out, (int(x1 * scale), int(y1 * scale)),
                       (int(x2 * scale), int(y2 * scale)), color, thick)
         # Ayak noktası
-        cv2.circle(out, pts[-1], 3, color, -1)   # -1 = içi dolu daire
+        cv2.circle(out, pts[-1], round(3 * k), color, -1)   # -1 = içi dolu daire
         # Etiket: yaya için sadece ID, diğerleri için sınıf adı da
         label = f"{track_id}" if is_person else f"{track_id} {name}"
-        cv2.putText(out, label, (int(x1 * scale), int(y1 * scale) - 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+        cv2.putText(out, label, (int(x1 * scale), int(y1 * scale) - round(4 * k)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45 * k, color, line)
 
     # Sol üstte kare numarası (beyaz yazı, okunsun diye siyah kenarlı)
     text = f"kare {frame_no}"
-    cv2.putText(out, text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 4)
-    cv2.putText(out, text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    org = (round(10 * k), round(25 * k))  # yazı büyüyünce kenardan uzaklığı da büyüsün
+    cv2.putText(out, text, org, cv2.FONT_HERSHEY_SIMPLEX, 0.7 * k, (0, 0, 0), 4 * line)
+    cv2.putText(out, text, org, cv2.FONT_HERSHEY_SIMPLEX, 0.7 * k, (255, 255, 255), 2 * line)
     return out
 
 

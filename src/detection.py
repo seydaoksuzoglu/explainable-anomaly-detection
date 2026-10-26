@@ -8,6 +8,7 @@ Bu dosyanın iki işi var:
 Takip (kalıcı ID atama) burada YOK - o tracking.py'nin işi (Adım 2).
 """
 
+import configparser         # MOT17'nin seqinfo.ini dosyasını okumak için (Python'un kendi modülü)
 from pathlib import Path    # dosya yollarıyla OS'ten bağımsız çalışmak için
 
 import cv2
@@ -33,6 +34,7 @@ def iter_frames(source):
     
     source:
         - klasör ise --> içindeki resim dosyaları sırasıyla (001.tif, 002.tif, ...)
+          MOT17 dizi klasörü ise (ör. MOT17-02-FRCNN) --> kareler onun img1/ alt klasöründen.
         - dosya ise --> video dosyası (mp4, avi...), cv2.VideoCapture ile okunur.
 
     frame_no 1'den başlar. Neden 0 değil? Ped2'nin etiket dosyası (UCSDped2.m) kareleri
@@ -45,6 +47,12 @@ def iter_frames(source):
     source = Path(source)
 
     if source.is_dir():
+        # MOT17 yapısı: MOT17-02-FRCNN/ altında img1/ (kareler), gt/, seqinfo.ini.
+        # Kaynak olarak DİZİ klasörünü veriyoruz (img1'i değil): böylece dizi adı
+        # (MOT17-02-FRCNN) CSV/video adlarına girer ve seqinfo.ini'ye (fps) yanında ulaşılır.
+        # Kareleri ise img1/'den okuyoruz. Ped klasörlerinde img1 yok → bu satır bir şey yapmaz.
+        if (source / "img1").is_dir():
+            source = source / "img1"
         # sorted(): dosya sisteminin verdiği sıra garanti değil biz ad sırasına zorluyoruz.
         # Ped2 adları sıfırlarla dolu (001, 002...) olduğundan ad sırası = zaman sırası.
         files = sorted(p for p in source.iterdir() if p.suffix.lower() in IMAGE_EXTS)
@@ -74,7 +82,8 @@ def source_fps(source, default=10.0):
     """Kaynağın kare hızını (fps = saniyedeki kare sayısı) döndürür.
 
     - Video dosyası (mp4, avi...) kendi fps'ini içinde saklar → oradan okuruz.
-    - Kare klasörü (Ped2 gibi) fps bilgisi taşımaz → varsayılanı döndürürüz.
+    - MOT17 dizi klasörü fps'i seqinfo.ini dosyasında yazar (frameRate=30) → oradan okuruz.
+    - Düz kare klasörü (Ped2 gibi) fps bilgisi taşımaz → varsayılanı döndürürüz.
       Ped2 ve Ped1 saniyede 10 kare kaydedildiği için varsayılan 10.
 
     Neden lazım? Videoyu kaynağın gerçek fps'iyle yazmazsak hızı bozulur: 30 fps'lik bir
@@ -83,6 +92,15 @@ def source_fps(source, default=10.0):
     """
     source = Path(source)
     if source.is_dir():
+        # Eskiden klasör için hep 10 dönüyordu → MOT17 (30 fps) 3 kat yanlış olurdu:
+        # takipçi 3 sn yerine 1 sn bekler, time_s ve video hızı bozulurdu.
+        seqinfo = source / "seqinfo.ini"
+        if seqinfo.is_file():
+            # .ini dosyası "[Bölüm]" başlıkları ve "anahtar=değer" satırlarından oluşur;
+            # configparser bunu sözlük gibi okur: info["Sequence"]["frameRate"] → "30"
+            info = configparser.ConfigParser()
+            info.read(seqinfo)
+            return float(info["Sequence"]["frameRate"])
         return default
     cap = cv2.VideoCapture(str(source))
     fps = cap.get(cv2.CAP_PROP_FPS)   # okunamazsa 0 döner
