@@ -14,6 +14,7 @@ ayakla temsil edilir; merkez noktası yanıltır.
 Seçim: YOLO (hazır) + ByteTrack (gömülü, hafif, düşük-güvenli tespitleri de eşleştirir).
 Neden: hızlı kurulum, gerçek-zamanlıya uygun; takip zorunlu (kimlik → yörünge → davranış).
 Takipçi modüler: occlusion/ID-switch sorun olursa BoT-SORT (ReID) ya da karşılaştırma.
+(2026-10-26 güncelleme: varsayılan takipçi OC-SORT oldu → "Tespit ve takip katmanları ayrıldı".)
 
 ## Karar katmanı: hibrit (kural + öğrenilmiş)
 Seçim: kural kanalı + öğrenilmiş tek-sınıf kanalı, geç füzyon. Neden: saf kural kırılgan
@@ -70,3 +71,27 @@ görselleştirme ölçeği ve fps kaynaktan okunur (sabit kodlanmaz).
 Seçim: çıktı video kaynağın fps'iyle yazılır; `--fps` yalnız sunum için hızlandırma.
 Neden: sabit 10 fps, 30 fps'lik videoyu 3x ağır çekim yapıyordu (hoca: "oynatma yavaş").
 Hızlandırılmış video gerçek hız gibi sunulmaz; çıktıda "x hızlandırılmış" yazar.
+
+## Geliştirme ortamı: WSL2 Ubuntu 24.04 + Python 3.12 (2026-10-22)
+Seçim: proje WSL2 içinde ayrı bir Ubuntu 24.04 dağıtımında, Linux diskinde (~/projects).
+Neden: Windows Smart App Control imzasız DLL'leri (torch, SQLAlchemy) engelliyor, istisna listesi
+yok ve bu bilgisayarda şu an kapatılması uygun değil. Ayrı dağıtım: ROS 2 kurulu 22.04 ortamından
+izolasyon. Python 3.12: 24.04 varsayılanı, tüm paketler destekliyor (önceki 3.11 kararının yerine).
+Veri /mnt/c yerine Linux diskinde: Windows diskinden okuma çok yavaş.
+
+## Tespit ve takip katmanları ayrıldı (2026-10-26)
+Seçim: `Detector.detect()` (N,6) dizi döndürür [x1,y1,x2,y2,güven,sınıf_no], conf=0.1; takipçi
+ultralytics'ten doğrudan kurulur (`model.track()` yerine). Varsayılan OC-SORT, bekleme süresi
+saniye cinsinden (3 sn → `track_buffer = sn × fps`).
+Neden: hoca önerisi; her takipçi aynı tespitlerle çalışır → karşılaştırma adil. Sabit 30 kare
+Avenue'da (25 fps) yalnız 1.2 sn ediyordu. OC-SORT Avenue 01+06+15'te ByteTrack'e göre ~%25 daha
+az ID, %97 kapsama (geçici; MOT17 IDF1 ile kesinleşecek). Regresyon testi eski ölçümlerle birebir
+aynı (ByteTrack 1.2 sn: 649 ID / 29623; OC-SORT 3 sn: 489 ID / 28799).
+
+## Yörünge kaydı: CSV, takip bir kez yapılır (2026-10-26)
+Seçim: her klip için `outputs/trajectories/<veriseti>_<klip>.csv`; sütunlar frame, time_s,
+track_id, class, conf, ayak noktası (x_foot, y_foot), kutu (x1..y2).
+Neden: takip yavaş (YOLO her karede), öznitelik/kural denemeleri hızlı olmalı → takip bir kez,
+sonraki fazlar CSV'yi okur. time_s: farklı fps'li veri setlerinde hızı saniyede ölçmek için.
+Kutu: hızı kişinin kameraya uzaklığına göre normalleştirmek ve sabit sahte kutuları ayıklamak için.
+Dosya adında veri seti var (Test001 hem Ped1'de hem Ped2'de). CSV: ek paket yok, gözle kontrol edilir.

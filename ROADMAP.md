@@ -19,8 +19,10 @@ Durum: `[ ]` yapılacak · `[~]` devam · `[x]` bitti
 
 ## Faz 1 — Algı → yörünge çıkarma  [~]
 - [x] YOLO + ByteTrack'i bir test klibinde çalıştır
-- [~] Her nesne: ID + ayak noktası + kare kare konum kaydı (ayak noktası hazır; CSV kaydı kaldı)
+- [x] Her nesne: ID + ayak noktası + kare kare konum kaydı → `src/trajectory.py`,
+      `outputs/trajectories/<veriseti>_<klip>.csv` (satır/ID sayısı tracking.py ile birebir)
 - [x] Kutular + ID + iz çizili görsel video
+- [x] Tespit ve takip katmanlarını ayır (hoca): OC-SORT varsayılan, bekleme süresi saniye cinsinden
 - [x] Video kaynağın gerçek fps'iyle yazılsın + boyuta göre ölçek (hoca: "oynatma yavaş")
 - [~] Hızlı hareket testi: Ped1 + Ped2 + Avenue'nun tüm test klipleri işlendi (69 video,
       `outputs/<veri seti>/`); MOT17 kaldı. Bulgu: Avenue'da iz ömrü kısa (~1.9 sn) → takipçi

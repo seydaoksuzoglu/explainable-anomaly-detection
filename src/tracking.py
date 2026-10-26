@@ -1,95 +1,127 @@
 """
-tracking.py — Faz 1, Adım 2: ByteTrack ile her nesneye kalıcı kimlik (ID) verme.
+tracking.py — Faz 1: tespitlerden kalıcı kimlik (ID) üretme. TAKİP KATMANI.
 
 detection.py her kareye ayrı ayrı bakar: "bu karede 24 kişi var" der ama
 "kare 5'teki şu kişi, kare 4'teki hangi kişiydi?" sorusunu cevaplayamaz.
 Takipçi bu soruyu cevaplar: aynı kişiye her karede aynı ID'yi verir.
 ID olmadan yörünge olmaz; yörünge olmadan davranış (hız, oyalanma...) olmaz.
+
+Katmanlar AYRI (hoca önerisi, DECISIONS.md):
+    kare → [detection.py: Detector.detect] → tespitler → [bu dosya: takipçi] → izler
+Takipçi YOLO'yu hiç bilmez; sadece tespit tablosunu görür. Böylece:
+  - her takipçi AYNI tespitlerle çalışır → karşılaştırma adil olur,
+  - dedektör ve takipçi birbirinden bağımsız değiştirilebilir.
+
+Çıktı biçimi SABİT (sonraki fazlar sadece bunu görür):
+    izler = [(track_id, sınıf_adı, güven, x1, y1, x2, y2), ...]
 """
 
+import argparse
 from collections import Counter   # ID başına kaç karede görüldüğünü saymak için
 
-from detection import Detector, TRACKED_CLASSES, iter_frames
+from ultralytics.engine.results import Boxes             # tespitleri takipçinin beklediği kaba koyar
+from ultralytics.trackers.track import TRACKER_MAP       # ad → takipçi sınıfı ("ocsort" → OCSORT)
+from ultralytics.utils import YAML, IterableSimpleNamespace
+from ultralytics.utils.checks import check_yaml          # "ocsort.yaml" adını dosya yoluna çevirir
+
+from detection import Detector, TRACKED_CLASSES, iter_frames, source_fps
+
+# Avenue'da ölçtük: OC-SORT, ByteTrack'e göre %25 daha az ID kopması verdi (kapsama %97).
+# Geçici varsayılan; MOT17'de IDF1 ile kesinleşecek.
+DEFAULT_TRACKER = "ocsort"
+# Kaybolan bir kişi kaç SANİYE beklensin? (Kare cinsinden değil: fps veri setine göre değişir.)
+DEFAULT_BUFFER_SECONDS = 3.0
+# Şimdilik görünüş (ReID) KULLANMAYAN takipçiler. ReID'li olanlar (botsort, deepocsort,
+# tracktrack) ek girdi ister; onları gerçek bir ReID modeliyle ayrı bir adımda ekleyeceğiz.
+SUPPORTED_TRACKERS = ("bytetrack", "ocsort", "fasttrack")
 
 
 class Tracker:
-    """Detector'ın modelini ByteTrack ile birlikte çalıştıran sınıf.
+    """Tespit katmanının çıktısını alıp ID veren takip katmanı."""
 
-    Not: Ultralytics'te tespit ve takip TEK çağrıda yapılır: model.track(...) önce YOLO ile
-    kutuları bulur, sonra takipçiye verir. Bu yüzden burada detector.detect()'i çağırmıyoruz;
-    Detector'dan sadece yüklü modeli ve ayarlarını (imgsz, sınıflar) ödünç alıyoruz.
-    Böylece model ayarları tek yerde (detection.py) durur.
-    """
-
-    def __init__(self, detector=None, tracker_cfg="bytetrack.yaml"):
+    def __init__(self, detector=None, tracker_type=DEFAULT_TRACKER,
+                 buffer_seconds=DEFAULT_BUFFER_SECONDS):
+        if tracker_type not in SUPPORTED_TRACKERS:
+            raise ValueError(f"Desteklenen takipçiler: {SUPPORTED_TRACKERS}, verilen: {tracker_type}")
         # Dışarıdan bir Detector verilmezse varsayılan ayarlarla yenisini oluştur.
         self.detector = detector if detector is not None else Detector()
-        # Takipçi bir ayar dosyasıyla seçilir. "botsort.yaml" yazmak takipçiyi değiştirmeye
-        # yeter → CLAUDE.md'deki "takipçi modüler/swappable" kuralı bu tek parametre.
-        self.tracker_cfg = tracker_cfg
+        self.tracker_type = tracker_type
+        self.buffer_seconds = buffer_seconds
+
+    def _new_tracker(self, fps):
+        """Ayarları okuyup TAZE bir takipçi nesnesi kurar.
+
+        Ayarlar ultralytics'in hazır YAML dosyasından gelir (ör. ocsort.yaml); biz sadece
+        bekleme süresini (track_buffer) videonun fps'ine göre yeniden yazarız:
+            3 sn × 10 fps (Ped2)   = 30 kare
+            3 sn × 25 fps (Avenue) = 75 kare
+        Eskiden bu ayar her videoda 30 kareydi → Avenue'da sadece 1.2 saniye ediyordu.
+        """
+        cfg = IterableSimpleNamespace(**YAML.load(check_yaml(f"{self.tracker_type}.yaml")))
+        cfg.track_buffer = max(1, round(self.buffer_seconds * fps))
+        return TRACKER_MAP[self.tracker_type](args=cfg)
 
     def track_clip(self, source):
         """Bir klibi baştan sona takip eder; her kare için (frame_no, kare, izler) verir.
 
-        izler = [(track_id, sınıf_adı, güven, x1, y1, x2, y2), ...]
-
         Bu da bir generator (yield): iter_frames gibi kareleri tek tek işler.
         """
+        # Her klip için YENİ bir takipçi: önceki klibin izleri taşınmaz, ID'ler 1'den başlar.
+        # (Eskiden bunu model.track(persist=...) ile dolaylı yapıyorduk; şimdi açıkça yapıyoruz.)
+        tracker = self._new_tracker(source_fps(source))
+
         for frame_no, frame in iter_frames(source):
-            result = self.detector.model.track(
-                frame,
-                # persist: takipçinin hafızasını bir sonraki çağrıya taşı.
-                #   Kare 1'de False → yeni, boş bir takipçi kurulur ve ID'ler 1'den başlar.
-                #   Sonraki karelerde True → takipçi önceki kareleri hatırlar, ID'ler korunur.
-                # Böylece her klip temiz başlar; Test001'in son ID'si Test002'ye taşmaz.
-                persist=frame_no > 1,
-                tracker=self.tracker_cfg,
-                imgsz=self.detector.imgsz,
-                classes=self.detector.classes,
-                # conf'u BİLEREK vermiyoruz: ultralytics takipte onu 0.1'e çeker.
-                # ByteTrack'in farkı, düşük güvenli (0.1–0.25) tespitleri de kullanmasıdır:
-                # örneğin kalabalıkta yarı kapanmış birinin güveni düşer ama hâlâ oradadır;
-                # ByteTrack onu mevcut bir izle eşleyip kimliğini kaybetmez.
-                verbose=False,
-            )[0]
+            # --- Katman 1: tespit ---
+            dets = self.detector.detect(frame)           # (N, 6): x1,y1,x2,y2,güven,sınıf_no
 
-            tracks = []
-            # boxes.id: takipçinin verdiği ID'ler. Karede hiç iz yoksa None gelir.
-            if result.boxes.id is not None:
-                for track_id, xyxy, score, cls_id in zip(result.boxes.id.int().tolist(),
-                                                         result.boxes.xyxy.tolist(),
-                                                         result.boxes.conf.tolist(),
-                                                         result.boxes.cls.int().tolist()):
-                    x1, y1, x2, y2 = xyxy
-                    tracks.append((track_id, TRACKED_CLASSES[cls_id], score, x1, y1, x2, y2))
+            # --- Katman 2: takip ---
+            # Takipçi tespitleri ultralytics'in Boxes kabında ister (.xywh, .conf, .cls
+            # özelliklerini oradan okur). frame.shape[:2] = (yükseklik, genişlik).
+            out = tracker.update(Boxes(dets, frame.shape[:2]), frame)
 
+            # out: (M, 8) dizi; her satır bir iz: [x1, y1, x2, y2, track_id, güven, sınıf_no, idx]
+            # idx = bu izin eşleştiği tespitin sırası (bize lazım değil; _ ile atlıyoruz).
+            # Sabit çıktı biçimimize çeviriyoruz; numpy sayılarını sıradan Python sayısına
+            # (int/float) çeviriyoruz ki sonraki adımlarda (CSV, veritabanı) sorun çıkmasın.
+            tracks = [
+                (int(tid), TRACKED_CLASSES[int(cls_id)], float(score),
+                 float(x1), float(y1), float(x2), float(y2))
+                for x1, y1, x2, y2, tid, score, cls_id, _ in out
+            ]
             yield frame_no, frame, tracks
 
 
-# Doğrudan çalıştırınca:  python src/tracking.py
-if __name__ == "__main__":
-    clip = "data/UCSDped2/Test/Test001"
-    tracker = Tracker()
-
-    seen = Counter()      # track_id → kaç karede görüldü
-    track_class = {}      # track_id → sınıf adı (en son görülen)
-
-    for frame_no, frame, tracks in tracker.track_clip(clip):
-        for track_id, name, *_ in tracks:   # *_ : kalan alanlar (güven, kutu) şimdilik lazım değil
+def summarize(tracker, clip):
+    """Bir klibi takip edip özet sayıları döndürür (takipçi karşılaştırması için)."""
+    seen = Counter()    # track_id → kaç karede görüldü
+    for _, _, tracks in tracker.track_clip(clip):
+        for track_id, *_ in tracks:   # *_ : kalan alanlar şimdilik lazım değil
             seen[track_id] += 1
-            track_class[track_id] = name
+    return seen
 
-        # Birkaç karede hangi ID'lerin görüldüğünü yazdır
-        if frame_no in (1, 2, 100):
-            ids = sorted(t[0] for t in tracks)
-            print(f"kare {frame_no}: {len(tracks)} iz, ID'ler: {ids}")
 
-    # --- Özet: takip ne kadar sağlam? ---
-    lengths = list(seen.values())
-    short = [tid for tid, n in seen.items() if n < 10]
-    print(f"\nToplam farklı ID: {len(seen)}")
-    print(f"Bir ID ortalama {sum(lengths) / len(lengths):.0f} karede görüldü (klip {frame_no} kare)")
-    print(f"10 kareden kısa süren ID sayısı: {len(short)}")
-    bikes = [tid for tid, c in track_class.items() if c != "person"]
-    for tid in bikes:
-        print(f"Yaya olmayan iz: ID {tid} ({track_class[tid]}), {seen[tid]} karede görüldü")
+# Kullanım:
+#   python src/tracking.py                                              → Ped2 Test001, OC-SORT
+#   python src/tracking.py data/Avenue/testing_videos/15.avi --tracker bytetrack
+#   python src/tracking.py data/Avenue/testing_videos/15.avi --tracker ocsort --buffer 3
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Bir klibi takip edip özet istatistik verir.")
+    parser.add_argument("source", nargs="*", default=["data/UCSDped2/Test/Test001"],
+                        help="bir veya birden çok kare klasörü / video dosyası")
+    parser.add_argument("--tracker", default=DEFAULT_TRACKER, choices=SUPPORTED_TRACKERS)
+    parser.add_argument("--buffer", type=float, default=DEFAULT_BUFFER_SECONDS,
+                        help="kaybolan iz kaç saniye beklensin")
+    args = parser.parse_args()
+
+    tracker = Tracker(tracker_type=args.tracker, buffer_seconds=args.buffer)
+    total_ids = total_frames = short = 0
+    for clip in args.source:
+        seen = summarize(tracker, clip)
+        total_ids += len(seen)
+        total_frames += sum(seen.values())
+        short += sum(1 for n in seen.values() if n < 10)
+
+    print(f"Takipçi: {args.tracker}, bekleme: {args.buffer} sn, klip sayısı: {len(args.source)}")
+    print(f"Toplam farklı ID:        {total_ids}")
+    print(f"İzlenen kişi-kare:       {total_frames}")
+    print(f"10 kareden kısa iz oranı: %{100 * short / max(1, total_ids):.0f}")

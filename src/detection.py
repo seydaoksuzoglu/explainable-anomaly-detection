@@ -68,7 +68,7 @@ def iter_frames(source):
                 frame_no += 1
                 yield frame_no, frame
         finally:
-            cap.release()  # döngü yarıda kesilse bile video dosyasını kapat4
+            cap.release()  # döngü yarıda kesilse bile video dosyasını kapat
 
 def source_fps(source, default=10.0):
     """Kaynağın kare hızını (fps = saniyedeki kare sayısı) döndürür.
@@ -96,7 +96,7 @@ class Detector:
     karede tekrar tekrar kullanılır. Ayarlar (imgsz, conf, sınıflar) da tek yerde durur.
     """
 
-    def __init__(self, weights="weights/yolo11s.pt", imgsz=1280, conf=0.25):
+    def __init__(self, weights="weights/yolo11s.pt", imgsz=1280, conf=0.1):
         # Dosya yoksa ultralytics onu bu yolla otomatik indirir.
         # GPU varsa kendiliğinden onu kullanır.
         self.model = YOLO(weights)
@@ -105,13 +105,25 @@ class Detector:
         # (Denememizde 640'a göre daha çok kişi ve daha yüksek güven skoru verdi.)
         self.imgsz = imgsz
         # conf: bu güven skorunun altındaki tespitler atılır.
+        # 0.1 gibi DÜŞÜK bir eşik seçtik, çünkü takip katmanı düşük güvenli tespitlere de
+        # ihtiyaç duyar (ByteTrack/OC-SORT'un ikinci eşleştirme turu 0.1–0.25 arasını kullanır).
+        # Eskiden model.track() bunu kendisi 0.1'e çekiyordu; artık tespiti biz yaptığımız
+        # için bu ayarı bilerek kendimiz veriyoruz. "Kesin" tespit isteyen yer kendisi süzer.
         self.conf = conf
         # Sözlüğün anahtarları -> [0, 1, 2, 3, 7, 36]. YOLO sadece bu sınıfları döndürür.
         self.classes = list(TRACKED_CLASSES)
 
     def detect(self, frame):
-        """Bir karedeki nesneleri döndürür: [(sınıf_adı, güven, x1, y1, x2, y2), ...]
+        """Bir karedeki nesneleri sayı tablosu (numpy dizisi) olarak döndürür.
+
+        Biçim: (N, 6) boyutlu dizi; her satır bir tespit:
+            [x1, y1, x2, y2, güven, sınıf_no]
         (x1, y1) sol üst, (x2, y2) sağ alt köşe; piksel cinsinden, orijinal kare ölçeğinde.
+        N = 0 olabilir (karede hiçbir şey yoksa boş dizi döner).
+
+        Neden artık liste değil de dizi? Takip katmanı (tracking.py) tespitleri bu sayısal
+        biçimde ister. Sınıf ADI ("person") yerine sınıf NUMARASI (0) tutuyoruz; ada
+        sadece insanlara gösterirken TRACKED_CLASSES ile çeviriyoruz.
         """
         # predict() bir liste döndürür (aynı anda birden çok görüntü verilebildiği için).
         # Tek kare verdik → ilk elemanı alıyoruz. verbose=False: her karede konsola yazmasın.
@@ -120,15 +132,9 @@ class Detector:
             classes=self.classes, verbose=False,
         )[0]
 
-        detections = []
-        # result.boxes: bulunan kutular. Değerler GPU tensörü olarak gelir;
-        # .tolist() ile sıradan Python sayılarına çeviriyoruz.
-        for xyxy, score, cls_id in zip(result.boxes.xyxy.tolist(),
-                                       result.boxes.conf.tolist(),
-                                       result.boxes.cls.tolist()):
-            x1, y1, x2, y2 = xyxy
-            detections.append((TRACKED_CLASSES[int(cls_id)], score, x1, y1, x2, y2))
-        return detections
+        # result.boxes.data zaten tam istediğimiz biçimde: (N, 6) = x1,y1,x2,y2,güven,sınıf.
+        # Değerler GPU'da duruyor → .cpu() ile ana belleğe, .numpy() ile numpy dizisine.
+        return result.boxes.data.cpu().numpy()
 
 
 def draw_detections(frame, detections, scale=2):
@@ -138,7 +144,8 @@ def draw_detections(frame, detections, scale=2):
     Kopya üzerinde çalıştığımız için orijinal kare bozulmaz.
     """
     out = cv2.resize(frame, None, fx=scale, fy=scale)
-    for name, score, x1, y1, x2, y2 in detections:
+    for x1, y1, x2, y2, score, cls_id in detections:
+        name = TRACKED_CLASSES[int(cls_id)]   # numara → ad (0 → "person")
         # Koordinatlar orijinal ölçekte → büyütme oranıyla çarp; çizim tam sayı piksel ister.
         p1 = (int(x1 * scale), int(y1 * scale))
         p2 = (int(x2 * scale), int(y2 * scale))
@@ -161,7 +168,10 @@ if __name__ == "__main__":
         if frame_no not in (1, 100):
             continue
         dets = detector.detect(frame)
-        names = [d[0] for d in dets]
+        # Ekrana/resme sadece güvenli tespitleri (≥ 0.25) koyalım; 0.1–0.25 arası takip içindir.
+        # dets[:, 4] = tüm satırların 5. sütunu (güven). Koşul, satırları süzen bir maske üretir.
+        dets = dets[dets[:, 4] >= 0.25]
+        names = [TRACKED_CLASSES[int(c)] for c in dets[:, 5]]
         print(f"kare {frame_no}: {len(dets)} tespit ->",
             {n: names.count(n) for n in set(names)})
         cv2.imwrite(f"outputs/detect_Test001_{frame_no:03d}.jpg",
