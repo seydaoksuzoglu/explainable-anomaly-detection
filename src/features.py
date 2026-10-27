@@ -8,6 +8,8 @@ Girdi : trajectory.py'nin yazdığı yörünge CSV'si (bir satır = bir nesnenin
 Adım 2.1: yumuşatma, hız (piksel/sn ve boy/sn), yön, kalış süresi.
 Adım 2.2: ivme, yön değişimi, izin tek sınıfı (track_class).
 Düzeltme : kısa boşluklar hesaptan önce ara değerle doldurulur (_fill_gaps).
+Adım 3.2 : izin toplam yer değiştirmesi (track_extent_h) ve durağan nesne işareti
+           (track_static); --zones verilirse bölge sütunları (zones.zone_features).
 
 Üç temel kural (DECISIONS.md):
   1. Önce yumuşat, sonra türev al. Ayak noktası kutu titredikçe birkaç piksel oynar;
@@ -38,6 +40,17 @@ MIN_MOVING_SPEED_H = 0.1
 # doldurulur. Daha uzun boşlukta kişinin ne yaptığını bilemeyiz (durmuş, dönmüş olabilir);
 # düz çizgi uydurmak tahmin olur → oraya dokunmuyoruz, zaman farkı yine time_s'ten doğru.
 MAX_GAP_SECONDS = 1.0
+# İz bütün ömrü boyunca bundan az yer değiştirdiyse "durağan nesne" sayılır (boy cinsinden).
+# Neden? Dedektör bazen direk/tabela gibi sabit nesneleri "person" sanıyor (Ped2 Test001
+# ID 21: 162 kare boyunca 3 piksel, ~0,2 boy). Bunlar oyalanma kuralında sahte alarm üretir.
+# DİKKAT: "duran izi at" DEĞİL — oyalanan gerçek insan da durur. Fark: bölgede oyalanan insan
+# oraya YÜRÜYEREK gelmiştir, izinin toplam yer değiştirmesi büyüktür. Durağan nesne ise
+# videonun başından sonuna yerinden hiç kıpırdamaz. Satır silinmez, yalnız işaretlenir.
+# Yer değiştirme TEK BAŞINA yetmez: kadraj kenarında 2-3 sn görünüp çıkan yürüyen kişi de
+# bu kısa sürede ancak ~0,4 boy yol alır (Ped2 Test001 ID 3, 10, 12). Bu yüzden ikinci şart:
+# izin medyan hızı da "duruyor" eşiğinin (MIN_MOVING_SPEED_H) altında olmalı. Yürüyenler
+# 0,17+ boy/sn, durağan nesneler 0,01-0,05 boy/sn.
+STATIC_EXTENT_H = 0.5
 
 
 def load_trajectory(path):
@@ -159,12 +172,23 @@ def _track_features(g):
     # Bölgeye özel kalış (oyalanma) Faz 3'te, bölge tanımlanınca hesaplanacak.
     g["dwell_s"] = tt - tt[0]
 
+    # --- 8) İzin toplam yer değiştirmesi (boy) ve durağan nesne işareti ---
+    # Yumuşatılmış yörüngenin kapladığı kutunun köşegeni: x'te ve y'de en uç noktalar arası
+    # (np.ptp = max − min) → hypot ile köşegen. Boyun medyanına bölünür (perspektif).
+    # Yumuşatılmış konum kullanılıyor: ham konumun titremesi duran nesneyi "hareketli" göstermesin.
+    extent = np.hypot(np.ptp(g["x_s"]), np.ptp(g["y_s"])) / np.median(g["h_s"])
+
     # Ara değerli satırları at, hesaplanan sütunları gerçek satırlara yaz. İki tablo da
     # kare sırasında → gerçek satırlar birebir aynı sırada eşleşir.
     real = g["_real"].to_numpy()
     for col in ["x_s", "y_s", "h_s", "speed_px", "speed_h", "heading",
                 "accel_px", "accel_h", "heading_change", "dwell_s"]:
         out[col] = g.loc[real, col].to_numpy()
+    # İz düzeyinde sabitler: izin her satırına aynı değer yazılır.
+    out["track_extent_h"] = extent
+    # İki şart birlikte: az yer değiştirdi VE (gerçek satırlarda) tipik hızı "duruyor" düzeyinde.
+    out["track_static"] = (extent < STATIC_EXTENT_H) and \
+        (np.median(out["speed_h"]) < MIN_MOVING_SPEED_H)
     return out
 
 
@@ -195,12 +219,20 @@ def compute_features(df):
 # Kullanım:
 #   python src/features.py outputs/trajectories/UCSDped2_Test001.csv
 #   python src/features.py outputs/trajectories/*.csv
+#   python src/features.py outputs/trajectories/UCSDped1_Test0*.csv --zones configs/zones/UCSDped1.json
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Yörünge CSV'lerinden öznitelik tablosu üretir.")
     parser.add_argument("trajectory", nargs="+", help="bir veya birden çok yörünge CSV'si")
     parser.add_argument("--out-dir", default="outputs/features",
                         help="öznitelik CSV'lerinin yazılacağı klasör")
+    parser.add_argument("--zones", help="sahne dosyası (configs/zones/<veriseti>.json): "
+                        "verilirse her bölge için in_<ad> ve dist_<ad> sütunları eklenir")
     args = parser.parse_args()
+
+    zones = None
+    if args.zones:
+        from zones import load_zones, zone_features     # yalnız bölge istenince lazım
+        zones, _ = load_zones(args.zones)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -208,9 +240,12 @@ if __name__ == "__main__":
     for path in args.trajectory:
         df = load_trajectory(path)
         feats = compute_features(df)
+        if zones and len(feats):                        # boş tabloda (hiç uzun iz yok) atla
+            feats = zone_features(feats, zones)
         out_path = out_dir / Path(path).name     # aynı ad: UCSDped2_Test001.csv
         # float_format: ondalıkları 3 basamağa kısalt (dosya küçük, gözle okunur kalsın)
         feats.to_csv(out_path, index=False, float_format="%.3f")
         n_dropped = df["track_id"].nunique() - feats["track_id"].nunique()
+        n_static = feats.loc[feats["track_static"], "track_id"].nunique() if len(feats) else 0
         print(f"{out_path}: {len(feats)} satır, {feats['track_id'].nunique()} iz "
-              f"({n_dropped} kısa iz atlandı)")
+              f"({n_dropped} kısa iz atlandı, {n_static} durağan)")

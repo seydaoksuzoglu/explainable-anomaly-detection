@@ -156,3 +156,93 @@ kare 72'de 6.3, 146'da 41 → düzeltmeyle 25.0 ve 33.0). MOT17-09'da > 1 boy/sn
 |yön değişimi| %99 1003 → 668 °/sn. Boşluksuz izlerde sonuç birebir aynı. Uzun boşlukta düz çizgi
 tahmin olur. Kalan uç etkisi (iz uçları, uzun boşluk kenarı ~0.25 sn) ve dedektör kutu
 zıplamaları Faz 3'te süreklilik şartıyla süzülecek.
+
+## Bölgeler: sahne başına JSON, configs/'ta; ilk sahne Ped1 (2026-10-27)
+Seçim: bölgeler `configs/zones/<veriseti>.json` (frame_size + ad/tür/köşe listesi); veri seti
+başına bir dosya; çizim için OpenCV tıklama aracı (Faz 6 arayüzüne kadar); içeride testi ayak
+noktasıyla, shapely.contains_xy (toplu). Kendini kesen poligon reddedilir.
+Neden: bir veri setinin bütün klipleri aynı sabit kameradan → bölge bir kez çizilir; data/
+gitignore'da, bölge ise deneyin parçası → git'te. Ped1: maskeli 10 klipte anomaliler yolda
+giden bisiklet/kaykay/araç/tekerlekli sandalye; çimene giren yaya görülmedi (maskesiz 26 klip
+bilinmiyor) → çimen bölgesi çizilip 36 klipte girişlerle etiketler karşılaştırılacak.
+Bulgu: Ped2 Test001'de çimendeki iki sabit nesne (ID 21, 36) "person" tespit edilmiş; hiç
+hareket etmiyorlar. Giriş kuralı (dışarı→içeri geçiş) bunları yakalamaz (hep içerideler) ama
+oyalanma kuralı yakalar → kurallardan önce durağan iz filtresi gerekli.
+
+## Bölge sütunları ve durağan iz işareti (2026-10-27)
+Seçim: her bölge için in_<ad> (ham) ve dist_<ad> (sınıra uzaklık / kutu yüksekliği; içeride
+eksi). İz düzeyinde track_extent_h (yumuşatılmış yörüngenin kapladığı kutunun köşegeni / medyan
+boy) ve track_static = extent < 0,5 boy VE medyan hız < 0,1 boy/sn. features.py --zones ile.
+Neden: mesafe boy cinsinden → perspektiften bağımsız (hızdaki gibi). Durağan işaretinde yalnız
+yer değiştirme yetmedi: kadraj kenarında 2-3 sn görünen yürüyenler de < 0,5 boy (Ped2 ID 3, 10,
+12) → hız şartı eklendi. İşaret "sahte tespit" DEĞİL, "görüldüğü sürece yer değiştirmedi"
+demek: Ped2'de direkler/sahte kaykay (21, 36, 108), MOT17-09'da çoğu gerçek ama hareketsiz insan
+(vitrin arkası, bekleyen çocuk) + bir reklam afişi. → Kurallarda kesin filtre olarak
+KULLANILMAYACAK; bilgi ve gerekçe için tutulur.
+Bulgu (önceki notu düzeltir): Ped1'de çimene yürüme anomalisi VAR (maskesiz kliplerde):
+Test011 ID 78, Test031 ID 83/101, Test009 ID 14, Test013 ID 21 → hepsi etiketli anomali
+karelerinde. Çimene "giren" 31 izin çoğu sınırda titreşen (en derin ≤ 0,07 boy, 11'e kadar
+içeri/dışarı geçiş) → 3.3'te debounce şart. Bazı izler bölgenin içinde başlıyor (Test009 ID 14,
+Ped2 direkleri) → durum makinesinin başlangıç durumu bilinçli ele alınmalı.
+
+## Avenue ve MOT17-09 bölgeleri; Avenue anomalileri bölge değil davranış (2026-10-27)
+Seçim: configs/zones/Avenue.json (sol alttaki çimen) ve MOT17-09.json (Vodafone kapı eşiği),
+kullanıcı tarafından tıklama aracıyla çizildi (WSL güncellemesi sonrası pencere açıldı).
+Bulgu: Avenue'nun 21 klibinde çimene derin giren yok (en derin 0,16 boy); bölgeye değen 32 izin
+çoğu sınır teması ya da çimende oturan kişi. Oturan kişi kadraj kenarında yarım göründüğü için
+klip 1'de ~7 ayrı ID alıyor (iz parçalanması). Etiketle örtüşen gerçek örnekler: klip 1 k962
+(kameranın dibinden geçen kişi), klip 7 k482 (koşan kişi, ID 322). → Avenue anomalileri davranış
+(koşma, fırlatma, ters yön): bölge kuralı mekanizmayı gösterir, anomaliyi hız/yön öznitelikleri
+ve Faz 4 modeli yakalamalı. MOT17-09 kapı şeridi çok ince (yalnız 2 iz basıyor) → daha derin çizilmeli.
+
+## MOT17'de gerçek takip ölçümü: OC-SORT'un üstünlüğü küçük, darboğaz tespit (2026-10-27)
+Ölçüm: MOT17-02/04/09 (sabit kamera), py-motmetrics, IoU ≥ 0,5, dikkat dağıtıcı GT (2,7,8,12)
+ile eşleşen tahminler atıldı (MOT kuralına yakın; resmî TrackEval değil → yaklaşık).
+  ByteTrack (30 kare): IDF1 0,520 · MOTA 0,458 · ID değişimi 306 · recall 0,576 · precision 0,835
+  ByteTrack (3 sn)   : IDF1 0,523 · MOTA 0,458 · ID değişimi 309
+  OC-SORT (3 sn)     : IDF1 0,538 · MOTA 0,463 · ID değişimi 347 · recall 0,551 · precision 0,869
+Sonuç: Avenue'daki "%25 daha az ID" vekil ölçütü iyileşmeyi abartıyordu. Gerçek kazanç IDF1'de
++1,8 puan; ID değişimi ise ARTTI (306 → 347), parçalanma 598 → 986. OC-SORT daha az ama daha
+kesin kutu veriyor (recall ↓, precision ↑) → "daha az ID"nin bir kısmı daha az kutudan.
+Asıl darboğaz tespit: recall ~%55-58 (COCO'da eğitilmiş YOLO11s kalabalıkta/kapanmada kişileri
+kaçırıyor). Görünüş (ReID) kullanılmadığı için önünden biri geçen kişinin kimliği korunamıyor
+(kullanıcının Avenue gözlemi). OC-SORT varsayılan kalabilir ama seçimin gerekçesi zayıf.
+Geliştirme yönleri: daha güçlü/yaya verisinde ince ayarlı dedektör, gerçek ReID modelli takipçi
+(BoT-SORT / Deep OC-SORT + OSNet), çevrimdışı iz birleştirme.
+
+## MOT17'de 9 takipçi yapılandırması: hepsi IDF1 0,52–0,54; BoT-SORT (ReID'siz) en dengeli (2026-10-27)
+Ölçüm: model.track ile aynı tespitler (YOLO11s, imgsz 1280, conf 0,1), bekleme 90 kare (3 sn),
+GMC kapalı (sabit kamera), ReID'li olanlar "model: auto" (dedektör öznitelikleri). mot_eval.py.
+  IDF1 / MOTA / ID değ. / recall:
+  ByteTrack .523/.456/310/.576 · FastTrack .527/.447/342/.589 · TrackTrack .523/.395/79/.421
+  TrackTrack+ReID .530/.398/67/.425 · BoT-SORT .537/.465/297/.584 · OC-SORT .538/.461/348/.550
+  Deep OC-SORT .541/.458/313/.531 · BoT-SORT+ReID .542/.455/389/.592 · Deep OC-SORT+ReID .544/.458/329/.531
+Sonuç: takipçiler arasında fark en fazla ~2 IDF1 puanı (3 dizi; yaklaşık ölçüm → fark küçük).
+BoT-SORT (ReID'siz) en dengeli: en yüksek MOTA, makul recall'lu takipçiler içinde en az ID
+değişimi ve parçalanma; IDF1'de OC-SORT ile eşit. TrackTrack'in az ID değişimi yanıltıcı (recall
+%42, kişilerin %75'ini çoğunlukla kaçırıyor; Avenue'daki "%79 kapsama" bulgusuyla tutarlı).
+"auto" ReID (dedektör öznitelikleri) en fazla +0,5 puan; BoT-SORT'ta ID değişimini artırıyor →
+zayıf görünüş özniteliği. Asıl darboğaz: tespit recall'u (≤ %59) ve gerçek ReID modelinin yokluğu.
+Avenue'daki vekil ölçüt grafiği raporda yalnız "vekil ölçüt" olarak, MOT17 sonucunun yanında kalır.
+Karar bekliyor: varsayılan takipçi OC-SORT → BoT-SORT (ReID'siz)? (tracking.py'de SUPPORTED'a eklenmeli)
+
+## Hoca toplantısı (2026-10-27): tespit ve takip iyileştirilecek
+Gösterilenler: bölge çizimi + bölge videoları (Ped1, Avenue, MOT17-09), MOT17'de 9 takipçinin
+IDF1/MOTA karşılaştırması. Hoca geri bildirimi: YOLO'nun bırakılması gerekebilir; takibin
+kaybolduğu videolar alçak açılı, tesis güvenliğinde kamera genelde daha üstten bakar. Öğrenci:
+tespit ve takibi iyileştirmek istiyor. Hocanın önerdiği yöntemler: CenterTrack, FairMOT,
+"TransformerMOT" (hangisi olduğu netleşecek: TransTrack / TrackFormer / MOTR / TransMOT).
+Değerlendirme ve plan aşağıdaki kayıtlarda.
+
+## Tespit/takip iyileştirme ertelendi; önce Faz 3 bitecek (2026-10-27)
+Seçim: hocanın önerileri (CenterTrack, FairMOT, transformer tabanlı MOT, YOLO'nun bırakılması) ve
+gerçek ReID şimdi denenmeyecek; ROADMAP'te "Ertelenen iş" bölümünde duruyor. Önce kural kanalı
+(Faz 3) tamamlanacak, sonra öncelik yeniden değerlendirilecek.
+Neden: kural kanalı projenin özgün katkısının bir yarısı ve yarım kaldı; takip iyileştirmesinin
+kurulum riski yüksek (eski kodlar, DCNv2 / RTX 50 serisi) ve veri sızıntısı riski var (hazır
+modeller MOT17 train'de eğitilmiş). Ölçümler gösterdi ki darboğaz önce dedektörde (recall ~%55),
+sonra ReID'de; takipçi seçimi en fazla ~2 IDF1 puanı fark ettiriyor → sıralama: dedektör,
+ReID, birleşik yöntemler.
+Sahne: tesis güvenliği kameraları yüksekten bakar (hoca). Bizde de yüksek açılı MOT17-04'te IDF1
+0,585, alçak açılı MOT17-02'de 0,391 (OC-SORT) → takip değerlendirmesi yüksek açılı sahnelere
+(MOT17-04, Ped1/Ped2; aday MOT20) ağırlık verecek; alçak açılı sahneler zor durum testi olarak kalır.

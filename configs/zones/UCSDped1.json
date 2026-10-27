@@ -1,0 +1,7 @@
+{
+  "scene": "UCSDped1",
+  "frame_size": [158, 238],
+  "zones": [
+    {"name": "cimen_sag", "type": "restricted", "points":[[140, 146], [237, 53], [237, 139]]}
+  ]
+}

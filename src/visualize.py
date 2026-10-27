@@ -6,6 +6,8 @@ Her karenin üzerine çizilenler:
   - ayak noktası (kutunun alt-ortası; ARCHITECTURE.md'deki "konum = ayak noktası" kararı)
   - iz: o ID'nin son 3 saniyedeki ayak noktalarını birleştiren çizgi = yörünge
   - sol üstte kare numarası
+  - (--zones verilirse, Faz 3) bölgeler yarı saydam turuncu; ayak noktası bir bölgenin içinde
+    olan nesnenin kutusu turuncu ve kalın, etiketinde bölgenin adı
 Sonra kareler birleştirilip outputs/ altına .mp4 olarak kaydedilir.
 
 Neden ayrı bir dosya? Çizim, takipten ayrı bir iş. Faz 6'da arayüz de bu çizim
@@ -25,6 +27,7 @@ import numpy as np
 
 from detection import source_fps
 from tracking import Tracker
+from zones import ZONE_COLOR, check_frame_size, draw_zones, inside, load_zones
 
 TRAIL_SECONDS = 3      # iz kaç saniye geriye uzansın (kare sayısı fps'e göre hesaplanır)
 TARGET_HEIGHT = 480    # küçük kareleri en az bu yüksekliğe yaklaşacak kadar büyüt
@@ -69,13 +72,17 @@ def draw_size(out_height):
     """
     return max(1.0, out_height / TARGET_HEIGHT)
 
-def draw_tracks(frame, frame_no, tracks, trails, scale):
+def draw_tracks(frame, frame_no, tracks, trails, scale, zones=None):
     """Bir kareye kutuları, ID'leri, ayak noktalarını ve izleri çizer.
 
     trails: ID → son ayak noktaları kuyruğu. Bu fonksiyon onu GÜNCELLER
     (yeni noktayı ekler), böylece bir sonraki karede iz bir adım uzar.
+    zones : (isteğe bağlı) bölge listesi. Önce bölgeler çizilir ki kutular üstte kalsın.
     """
     out = cv2.resize(frame, None, fx=scale, fy=scale) if scale != 1 else frame.copy()
+    zones = zones or []
+    if zones:
+        out = draw_zones(out, zones, scale)
 
     # Ölçüler çıktı karesinin boyutuna göre (draw_size). k=1 iken eski ölçülerin aynısı.
     k = draw_size(out.shape[0])
@@ -89,6 +96,13 @@ def draw_tracks(frame, frame_no, tracks, trails, scale):
         color = color_for(track_id) if is_person else (0, 0, 255)  # yaya dışı: hep kırmızı
         thick = line if is_person else 2 * line                    # ve kalın, göze çarpsın
 
+        # Ayak noktası bir bölgenin içinde mi? (HAM karar: sınırda titreyen kişi her karede
+        # içeri/dışarı gidip gelir — bu titremeyi Adım 3.3'teki debounce süzecek. Burada onu
+        # bilerek ham gösteriyoruz ki videoda görülebilsin.)
+        in_zones = [z.name for z in zones if inside(z, fx, fy)]
+        if in_zones:
+            color, thick = ZONE_COLOR, 2 * line                    # bölgedeki nesne turuncu
+
         # İz: ardışık ayak noktalarını çizgiyle birleştir
         pts = trails[track_id]
         for a, b in zip(pts, list(pts)[1:]):
@@ -101,6 +115,8 @@ def draw_tracks(frame, frame_no, tracks, trails, scale):
         cv2.circle(out, pts[-1], round(3 * k), color, -1)   # -1 = içi dolu daire
         # Etiket: yaya için sadece ID, diğerleri için sınıf adı da
         label = f"{track_id}" if is_person else f"{track_id} {name}"
+        if in_zones:
+            label += " > " + ",".join(in_zones)   # cv2 Türkçe/özel karakter çizemez → düz ASCII
         cv2.putText(out, label, (int(x1 * scale), int(y1 * scale) - round(4 * k)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45 * k, color, line)
 
@@ -112,11 +128,12 @@ def draw_tracks(frame, frame_no, tracks, trails, scale):
     return out
 
 
-def write_tracking_video(source, out_path, tracker=None, fps=None):
+def write_tracking_video(source, out_path, tracker=None, fps=None, zones=None, frame_size=None):
     """Bir klibi takip edip çizimli videoyu out_path'e yazar.
 
     fps: verilmezse kaynağın kendi fps'i kullanılır (gerçek hız).
          Elle verilirse video hızlandırılır/yavaşlatılır (sadece gösterim için).
+    zones, frame_size: load_zones'un döndürdükleri (isteğe bağlı).
     """
     tracker = tracker if tracker is not None else Tracker()
     real_fps = source_fps(source)
@@ -134,7 +151,9 @@ def write_tracking_video(source, out_path, tracker=None, fps=None):
     for frame_no, frame, tracks in tracker.track_clip(source):
         if scale is None:
             scale = scale_for(frame)   # ölçeği ilk karenin boyutundan bir kere belirle
-        out = draw_tracks(frame, frame_no, tracks, trails, scale)
+            if zones:
+                check_frame_size(frame_size, frame)   # yanlış sahne dosyasına karşı uyarı
+        out = draw_tracks(frame, frame_no, tracks, trails, scale, zones)
         if writer is None:
             # Video yazıcıyı ilk karede açıyoruz, çünkü boyutu (genişlik, yükseklik) ancak
             # ilk çizimden sonra biliyoruz. "mp4v" = .mp4 için yaygın bir sıkıştırma biçimi.
@@ -152,6 +171,7 @@ def write_tracking_video(source, out_path, tracker=None, fps=None):
 #   python src/visualize.py data/UCSDped2/Test/Test004            → başka bir klip
 #   python src/visualize.py benim_videom.mp4                      → gerçek bir video
 #   python src/visualize.py data/UCSDped2/Test/Test004 --fps 25   → sunum için hızlandırılmış
+#   python src/visualize.py data/UCSDped1/Test/Test011 --zones configs/zones/UCSDped1.json
 if __name__ == "__main__":
     # argparse: komut satırını okur. sys.argv'yi elle ayrıştırmaktan daha güvenli ve
     # "python src/visualize.py --help" yazınca kullanım bilgisini kendisi gösterir.
@@ -160,8 +180,10 @@ if __name__ == "__main__":
                         help="kare klasörü ya da video dosyası")
     parser.add_argument("--fps", type=float, default=None,
                         help="çıktı videonun fps'i (verilmezse kaynağın gerçek fps'i)")
+    parser.add_argument("--zones", help="sahne dosyası: bölgeleri ve bölgedeki nesneleri çiz")
     args = parser.parse_args()
+    zones, frame_size = load_zones(args.zones) if args.zones else (None, None)
 
     Path("outputs").mkdir(exist_ok=True)
     out_path = Path("outputs") / f"tracking_{Path(args.source).stem}.mp4"
-    write_tracking_video(args.source, out_path, fps=args.fps)
+    write_tracking_video(args.source, out_path, fps=args.fps, zones=zones, frame_size=frame_size)

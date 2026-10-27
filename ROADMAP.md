@@ -46,9 +46,15 @@ Durum: `[ ]` yapılacak · `[~]` devam · `[x]` bitti
 - bölgeye mesafe → Faz 3'e taşındı (bölge poligonu orada tanımlanıyor)
 > Çıktı: öznitelik tablosu.
 
-## Faz 3 — Kanal A: Kural motoru  [ ]
-- [ ] shapely poligon (ilk karede bölge tanımı)
-- [ ] bölgeye mesafe + bölgede kalış süresi (Faz 2'den taşındı)
+## Faz 3 — Kanal A: Kural motoru  [~]
+- [x] Adım 3.1: shapely poligon (ilk karede bölge tanımı) → `src/zones.py` + sahne dosyası
+      `configs/zones/UCSDped1.json` (sağdaki çimen), `Avenue.json` (çimen), `MOT17-09.json`
+      (dükkân girişi). Tıklama aracı WSL güncellemesinden sonra çalışıyor (önce WSLg "copy mode"da
+      açılmıyordu; yedek: `_handoff/sunum/bolge_cizici.html`).
+- [x] Adım 3.2: bölge sütunları (in_<ad>, dist_<ad> boy cinsinden işaretli) + iz yer değiştirmesi
+      ve durağan işareti (track_extent_h, track_static) → `features.py --zones`.
+      Bölgede kalış süresi 3.3'e (girişi debounce'lu durum makinesi belirleyecek).
+      Görsel: `visualize.py --zones` → bölge + bölgedeki nesne turuncu.
 - [ ] durum makinesi (dışarıda ↔ içeride) + debounce
 - [ ] süreklilik şartı: koşul tek karede değil ≥ X sn boyunca sağlanınca alarm; iz uçları ve
       uzun boşluk kenarlarının ilk/son ~0.25 sn'si (tek taraflı pencere) kurallarda güvenilmez
@@ -76,8 +82,29 @@ Durum: `[ ]` yapılacak · `[~]` devam · `[x]` bitti
 - [ ] Takipçi karşılaştırması (çekirdeğe alındı 2026-10-27): MOT17 sabit kamera dizilerinde
       (02, 04, 09) IDF1, MOTA, HOTA; ByteTrack / OC-SORT / BoT-SORT / Deep OC-SORT ...
       + Avenue'da vekil ölçütler (ID sayısı, kapsama) → seçilen takipçinin gerekçesi
+      Ön ölçüm yapıldı (2026-10-27, motmetrics, yaklaşık): 9 yapılandırma IDF1 0,52–0,54;
+      BoT-SORT (ReID'siz) en dengeli. Resmî TrackEval + HOTA ile tekrarlanacak.
+      Betikler: `_handoff/takip_olcum/` (run_trackers.py, mot_eval.py)
 - [ ] kural vs Isolation Forest vs füzyon karşılaştırması
 > Çıktı: sonuç tablosu/grafik (raporun yıldızı).
+
+## Ertelenen iş — Tespit ve takip iyileştirme (hocamın önerisi, 2026-10-27)  [ ]
+> Şimdilik YAPILMIYOR; Faz 3 bitince öncelik yeniden değerlendirilecek. Gerekçe ve ölçümler:
+> DECISIONS.md "Tespit/takip iyileştirme ertelendi".
+Denenebilecek yöntemler (darboğaz sırasına göre):
+- [ ] Dedektör: aynı takipçiyle YOLO11s / 11m / 11x ve transformer tabanlı RT-DETR (ultralytics
+      içinde, kurulum yok) → recall + IDF1. "YOLO'yu bırakalım mı?" sorusunun cevabı.
+- [ ] Gerçek ReID: BoT-SORT / Deep OC-SORT + OSNet (ultralytics "auto" ReID dedektör özniteliği,
+      zayıf). Kapanma sonrası kimliği korumayı hedefler.
+- [ ] Birleşik tespit+takip (hoca önerisi): CenterTrack (merkez noktası + önceki kareden kayma;
+      ReID yok), FairMOT (tespit + kimlik imzası tek ağda), transformer tabanlı MOT (hangisi
+      olduğu netleşecek: TrackFormer / MOTR / TransTrack / TransMOT).
+      Riskler: eski kod tabanları + DCNv2 derlemesi (torch 2.11 / RTX 50 serisi), hazır modellerin
+      MOT17 train ile eğitilmiş olması (aynı dizilerde ölçmek veri sızıntısı), ağır hesap.
+Veri seti / sahne:
+- [ ] Tesis güvenliğinde kamera genelde yüksekten bakar (hoca). Takip değerlendirmesi yüksek açılı
+      sahnelere ağırlık versin: MOT17-04, UCSD Ped1/Ped2; aday: MOT20 (kalabalık, yüksek açı).
+      Kanıt: OC-SORT IDF1 MOT17-04 (yüksek açı) 0,585 · MOT17-09 0,563 · MOT17-02 (alçak) 0,391.
 
 ## Faz 8 — Stretch (vakit kalırsa)  [ ]
 - [ ] LSTM autoencoder + karşılaştırma
