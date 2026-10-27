@@ -7,6 +7,7 @@ Girdi : trajectory.py'nin yazdığı yörünge CSV'si (bir satır = bir nesnenin
 
 Adım 2.1: yumuşatma, hız (piksel/sn ve boy/sn), yön, kalış süresi.
 Adım 2.2: ivme, yön değişimi, izin tek sınıfı (track_class).
+Düzeltme : kısa boşluklar hesaptan önce ara değerle doldurulur (_fill_gaps).
 
 Üç temel kural (DECISIONS.md):
   1. Önce yumuşat, sonra türev al. Ayak noktası kutu titredikçe birkaç piksel oynar;
@@ -33,6 +34,10 @@ MIN_TRACK_FRAMES = 10
 # Bu hızın altında kişi "duruyor" sayılır ve yönü tanımsızdır (NaN): duran birinin
 # "hareket yönü" titremeden ibarettir, her karede rastgele döner. 0.1 boy/sn ≈ 17 cm/sn.
 MIN_MOVING_SPEED_H = 0.1
+# Bundan kısa boşluklar (dedektörün kişiyi birkaç kare kaçırması) hesaptan önce ara değerle
+# doldurulur. Daha uzun boşlukta kişinin ne yaptığını bilemeyiz (durmuş, dönmüş olabilir);
+# düz çizgi uydurmak tahmin olur → oraya dokunmuyoruz, zaman farkı yine time_s'ten doğru.
+MAX_GAP_SECONDS = 1.0
 
 
 def load_trajectory(path):
@@ -58,9 +63,47 @@ def _smooth(series, time_s):
     return smoothed.to_numpy()
 
 
+def _fill_gaps(g):
+    """Bir izin kısa boşluklarını doğrusal ara değerle doldurur (yalnız HESAP için).
+
+    Sorun: yumuşatma penceresi zamanda ortalanmış (±0.25 sn). Boşluğun hemen yanındaki
+    karede pencerenin bir yarısı boş kalır → ortalama tek taraflı olur, yumuşatılmış konum
+    geride kalır ya da öne fırlar → sahte hız düşüşü/sıçraması (Ped2 Test001 ID 139: gerçek
+    ~22 px/sn iken boşluk kenarında 6.3 ve 41). Boşluğu doldurunca pencere hep iki taraflı.
+
+    Dönen tablo: kareler f0..f1 (kısa boşluklar dolu, uzun boşluklar yine eksik);
+    '_real' sütunu: satır gerçek mi (True) yoksa ara değerle mi üretildi (False).
+    """
+    # Bu izin fps'i: time_s = (frame − 1) / fps olduğu için iki uçtan geri hesaplanır.
+    # (İz en az MIN_TRACK_FRAMES satırlı → süre sıfır olamaz.)
+    f0, f1 = g["frame"].iloc[0], g["frame"].iloc[-1]
+    fps = (f1 - f0) / (g["time_s"].iloc[-1] - g["time_s"].iloc[0])
+    max_gap = round(MAX_GAP_SECONDS * fps)          # 10 fps → 10 kare, 30 fps → 30 kare
+
+    # reindex: ilk kareden son kareye HER kare için bir satır; eksik kareler NaN olur.
+    cols = ["time_s", "x_foot", "y_foot", "y1", "y2"]
+    full = g.set_index("frame")[cols].reindex(range(f0, f1 + 1))
+    missing = full["time_s"].isna()
+
+    # Her boşluğun uzunluğu: ardışık NaN'lara aynı numarayı verip (run) sayıyoruz.
+    # missing != missing.shift(): durum her değiştiğinde True → cumsum ile koşu numarası.
+    run = (missing != missing.shift()).cumsum()
+    gap_len = missing.groupby(run).transform("sum")
+    keep = ~missing | (gap_len <= max_gap)          # gerçek satırlar + kısa boşluklar
+
+    # interpolate: NaN'ları iki yanındaki gerçek değerler arasında düz çizgiyle doldurur.
+    # Kareler eşit aralıklı olduğundan doğrusal ara değer zamanda da doğru (time_s dahil).
+    full = full.interpolate()
+    full["_real"] = ~missing
+    return full[keep].reset_index()                 # frame yeniden sütun olur
+
+
 def _track_features(g):
     """TEK bir izin satırlarına öznitelik sütunlarını ekler (g = o izin tablosu)."""
-    g = g.copy()
+    out = g.copy()
+    # Hesap, kısa boşlukları doldurulmuş tabloda yapılır; sonuçlar sadece gerçek satırlara
+    # geri yazılır (en altta). Böylece tablo ve satır sayısı değişmez.
+    g = _fill_gaps(g)
     t = g["time_s"]
 
     # --- 1) Yumuşatma ---
@@ -115,7 +158,14 @@ def _track_features(g):
     # --- 7) Kalış süresi: iz ilk görüldüğünden beri geçen süre (sn) ---
     # Bölgeye özel kalış (oyalanma) Faz 3'te, bölge tanımlanınca hesaplanacak.
     g["dwell_s"] = tt - tt[0]
-    return g
+
+    # Ara değerli satırları at, hesaplanan sütunları gerçek satırlara yaz. İki tablo da
+    # kare sırasında → gerçek satırlar birebir aynı sırada eşleşir.
+    real = g["_real"].to_numpy()
+    for col in ["x_s", "y_s", "h_s", "speed_px", "speed_h", "heading",
+                "accel_px", "accel_h", "heading_change", "dwell_s"]:
+        out[col] = g.loc[real, col].to_numpy()
+    return out
 
 
 def compute_features(df):

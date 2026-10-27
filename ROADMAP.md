@@ -40,6 +40,8 @@ Durum: `[ ]` yapılacak · `[~]` devam · `[x]` bitti
 - [x] Adım 2.1: yumuşatma (0.5 sn), hız (piksel/sn + boy/sn), yön, kalış süresi → `src/features.py`
 - [x] Adım 2.2: ivme (işaretli), yön değişimi (°/sn, işaretli, unwrap), izin tek sınıfı (track_class)
       → `outputs/features/<veriseti>_<klip>.csv`
+- [~] Düzeltme: ≤ 1 sn boşluklar hesaptan önce ara değerle doldurulur (boşluk kenarında tek
+      taraflı pencere → sahte hız sıçraması). Kod `_handoff/features-gapfill/`'de test edildi.
 - [x] hız "saniyede" ölçülsün (veri setlerinin fps'i farklı: 10 / 25 / 30) → time_s'ten
 - bölgeye mesafe → Faz 3'e taşındı (bölge poligonu orada tanımlanıyor)
 > Çıktı: öznitelik tablosu.
@@ -48,6 +50,8 @@ Durum: `[ ]` yapılacak · `[~]` devam · `[x]` bitti
 - [ ] shapely poligon (ilk karede bölge tanımı)
 - [ ] bölgeye mesafe + bölgede kalış süresi (Faz 2'den taşındı)
 - [ ] durum makinesi (dışarıda ↔ içeride) + debounce
+- [ ] süreklilik şartı: koşul tek karede değil ≥ X sn boyunca sağlanınca alarm; iz uçları ve
+      uzun boşluk kenarlarının ilk/son ~0.25 sn'si (tek taraflı pencere) kurallarda güvenilmez
 - [ ] oyalanma süresi, ters yön
 > Çıktı: gerekçeli kural alarmları.
 

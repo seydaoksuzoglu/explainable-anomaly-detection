@@ -146,3 +146,13 @@ değişebiliyor (Ped2 ID 153). Bilinen sınırlılıklar: (1) yön değişimi ya
 0.1–0.15 boy/sn'de 46 °/sn, 0.5+ boy/sn'de 18 °/sn → kurallar onu yalnız yeterli hızda kullanmalı;
 (2) Ped2 Test001'de bisiklet izi (139) 67–180 arası sağlam ama sürücü 4 kısa yaya izine bölünmüş
 (153, 223, 268, 335) → araç anomalisini taşıyan iz aracın kendi izi; sürücünün izine güvenilmez.
+
+## Kısa boşluklar hesaptan önce ara değerle doldurulur (2026-10-27)
+Seçim: bir iz içindeki ≤ 1 sn'lik boşluklar (eksik kareler) doğrusal ara değerle doldurulup
+öznitelikler öyle hesaplanır; doldurulan satırlar tabloya yazılmaz. > 1 sn boşluklara dokunulmaz.
+Neden: zamanda ortalanmış pencere boşluk kenarında tek taraflı kalıyor → yumuşatılmış konum
+duruyor/fırlıyor → sahte hız düşüşü ve sıçraması (Ped2 Test001 ID 139: gerçek ~22 px/sn iken
+kare 72'de 6.3, 146'da 41 → düzeltmeyle 25.0 ve 33.0). MOT17-09'da > 1 boy/sn yaya satırı 109 → 91,
+|yön değişimi| %99 1003 → 668 °/sn. Boşluksuz izlerde sonuç birebir aynı. Uzun boşlukta düz çizgi
+tahmin olur. Kalan uç etkisi (iz uçları, uzun boşluk kenarı ~0.25 sn) ve dedektör kutu
+zıplamaları Faz 3'te süreklilik şartıyla süzülecek.
