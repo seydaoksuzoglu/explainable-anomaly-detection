@@ -46,22 +46,31 @@ Durum: `[ ]` yapılacak · `[~]` devam · `[x]` bitti
 - bölgeye mesafe → Faz 3'e taşındı (bölge poligonu orada tanımlanıyor)
 > Çıktı: öznitelik tablosu.
 
-## Faz 3 — Kanal A: Kural motoru  [~]
-- [x] Adım 3.1: shapely poligon (ilk karede bölge tanımı) → `src/zones.py` + sahne dosyası
-      `configs/zones/UCSDped1.json` (sağdaki çimen), `Avenue.json` (çimen), `MOT17-09.json`
-      (dükkân girişi). Tıklama aracı WSL güncellemesinden sonra çalışıyor (önce WSLg "copy mode"da
-      açılmıyordu; yedek: `_handoff/sunum/bolge_cizici.html`).
-- [x] Adım 3.2: bölge sütunları (in_<ad>, dist_<ad> boy cinsinden işaretli) + iz yer değiştirmesi
-      ve durağan işareti (track_extent_h, track_static) → `features.py --zones`.
-      Bölgede kalış süresi 3.3'e (girişi debounce'lu durum makinesi belirleyecek).
-      Görsel: `visualize.py --zones` → bölge + bölgedeki nesne turuncu.
-- [ ] durum makinesi (dışarıda ↔ içeride) + debounce
-- [ ] süreklilik şartı: koşul tek karede değil ≥ X sn boyunca sağlanınca alarm; iz uçları ve
-      uzun boşluk kenarlarının ilk/son ~0.25 sn'si (tek taraflı pencere) kurallarda güvenilmez
-- [ ] oyalanma süresi, ters yön
-> Çıktı: gerekçeli kural alarmları.
+## Faz 3 — Kanal A: Kural motoru  [x]
+> Ayrıntılı ölçümler ve gerekçeler DECISIONS.md'de (2026-10-27 / 28 kayıtları).
+- [x] 3.1 Bölge tanımı → `src/zones.py`, sahne dosyaları `configs/zones/<veriseti>.json`
+      (Ped1 çimen; Avenue çimen + merdiven yön bölgesi + turnike önü oyalanma; MOT17-09 dükkân girişi).
+      Tıklama aracı: köşeler + (yön bölgesinde) izinli yön okları.
+- [x] 3.2 Bölge sütunları (in_<ad>, dist_<ad> boy cinsinden) + iz yer değiştirmesi / durağan işareti
+      → `features.py --zones`; görsel `visualize.py --zones` (bölgedeki nesne turuncu).
+- [x] 3.3 Durum makinesi + debounce (histerezis: giriş ≥ 0,15 boy içeride 0,5 sn, çıkış dışarıda 1 sn)
+      → `src/rules.py`; videoda onaylı alarm kırmızı + gerekçe şeridi (`visualize.py --events`).
+      Ped1 36 klip: kare bazlı 441 alarm → 7 olay (5'i etiketli çimen girişi).
+- [x] 3.4a Ortak süreklilik mekanizması (Persistence); hız kuralı (eşik eğitim videolarından,
+      Avenue %99 = 0,87 boy/sn → 13 olay, %69'u etiketli anomali anında); yön kuralı (yasak yönde
+      ≥ 0,2 boy ilerleme; Avenue merdiven senaryosu 75 inişin 43'ü, çıkanlara 0 alarm).
+- [x] 3.4b Oyalanma: loiter bölgesinde kalış > max_dwell_s → alarm = giriş + sınır (Avenue turnike önü).
+- [x] 3.5 Bütün kural olayları tek tabloda: `<out-dir>/<sahne>_tum_olaylar.csv` (clip sütunu +
+      kural × bölge özeti). Kanal A'nın çıktısı; Faz 5 füzyonu ve Faz 6 olay günlüğü bunu okur.
+- Bilinen sınırlılık: kurallar takip kalitesine bağlı (iz parçalanması yön ve oyalanmayı en çok
+  etkiliyor) → Ertelenen iş "Tespit ve takip iyileştirme". Yön/giriş kuralları için etiketli senaryo
+  videosu Faz 7'de.
+> Çıktı: gerekçeli kural alarmları. ✓
 
 ## Faz 4 — Kanal B: Öğrenilmiş model  [ ]
+- [ ] Çıktı klasör düzeni (kullanıcı önerisi): outputs/<veriseti>/<bölüm: train|test>/
+      {trajectories,features,events,videos}/<klip> — Avenue train/test aynı adlı dosyaları birbirinin
+      üzerine yazıyor; Faz 4 train ve test özniteliklerini ayrı okuyacağı için önce bu.
 - [ ] Ped2 train (sadece normal) öznitelikleriyle Isolation Forest eğit
 - [ ] test'te anomali skoru + hangi öznitelik saptı
 > Çıktı: anomali skoru.

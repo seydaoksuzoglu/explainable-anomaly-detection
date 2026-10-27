@@ -20,7 +20,15 @@ klipleri aynı sabit kameradan. data/ değil configs/: bölge deneyin parçası,
         {"name": "cimen_sag", "type": "restricted", "points": [[x, y], [x, y], ...]}
       ]
     }
-type: kuralı belirler (restricted = giriş yasak, loiter = oyalanma; Adım 3.4'te kullanılacak).
+type: kuralı belirler:
+    restricted = giriş yasak
+    loiter     = oyalanma (3.4b): girmek serbest, "max_dwell_s" saniyeden uzun kalmak alarm
+                 (varsayılan 10 sn; ATM önü ile bekleme salonu farklı sınır ister → bölge başına)
+    direction  = yön kuralı (3.4a): "allowed_headings" (derece; 0 sağ, 90 ekranda yukarı,
+                 180 sol, 270 aşağı) ve "heading_tolerance" (derece, varsayılan 60).
+                 Örnek: [0, 180] ± 60 → yatay akış serbest, kameraya doğru/uzağa yürüyüş ihlal.
+Dosyanın üst düzeyinde isteğe bağlı sahne ayarları da durabilir (ör. "speed_limit_h": hız kuralı
+eşiği, boy/sn; rules.py --calibrate ile eğitim verisinden önerilir).
 """
 
 import argparse
@@ -36,14 +44,17 @@ from shapely.geometry import Polygon
 # features.py bölge sütunları için bu dosyayı kullanıyor ve YOLO'yu yüklemesine gerek yok
 # (ultralytics'i yüklemek birkaç saniye sürer, öznitelik hesabının ise ona ihtiyacı yok).
 
-ZONE_TYPES = ("restricted", "loiter")
+ZONE_TYPES = ("restricted", "loiter", "direction")
+DEFAULT_HEADING_TOLERANCE = 60   # derece: izinli yönden bu kadar sapma hâlâ "uygun yön"
+DEFAULT_MAX_DWELL_S = 10.0       # oyalanma bölgesinde izin verilen en uzun kalış (sn)
 ZONE_COLOR = (0, 140, 255)   # BGR turuncu: takip renkleriyle (yeşil/mavi tonlar) karışmasın
 
 
 class Zone:
     """Tek bir bölge: adı, türü ve shapely poligonu."""
 
-    def __init__(self, name, zone_type, points):
+    def __init__(self, name, zone_type, points, allowed_headings=None,
+                 heading_tolerance=DEFAULT_HEADING_TOLERANCE, max_dwell_s=DEFAULT_MAX_DWELL_S):
         if zone_type not in ZONE_TYPES:
             raise ValueError(f"Bilinmeyen bölge türü: {zone_type} (geçerli: {ZONE_TYPES})")
         if len(points) < 3:
@@ -57,6 +68,12 @@ class Zone:
         if not self.polygon.is_valid:
             raise ValueError(f"Bölge '{name}' geçersiz (kendini kesiyor olabilir): köşeleri "
                              "çevre boyunca sırayla tıkla")
+        # Yön bölgesi izinli yön(ler) ister; diğer türlerde yön bilgisi kullanılmaz.
+        if zone_type == "direction" and not allowed_headings:
+            raise ValueError(f"Yön bölgesi '{name}' için allowed_headings gerekli (ör. [0, 180])")
+        self.allowed_headings = [float(a) % 360 for a in (allowed_headings or [])]
+        self.heading_tolerance = float(heading_tolerance)
+        self.max_dwell_s = float(max_dwell_s)      # yalnız loiter bölgesinde kullanılır
 
     def __repr__(self):
         return f"Zone({self.name!r}, {self.type!r}, {len(self.points)} köşe)"
@@ -65,8 +82,16 @@ class Zone:
 def load_zones(path):
     """Sahne dosyasını okur → (zones listesi, frame_size [yükseklik, genişlik])."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    zones = [Zone(z["name"], z["type"], z["points"]) for z in data["zones"]]
+    zones = [Zone(z["name"], z["type"], z["points"], z.get("allowed_headings"),
+                  z.get("heading_tolerance", DEFAULT_HEADING_TOLERANCE),
+                  z.get("max_dwell_s", DEFAULT_MAX_DWELL_S)) for z in data["zones"]]
     return zones, data.get("frame_size")
+
+
+def load_scene_settings(path):
+    """Sahne dosyasının bölge dışındaki ayarları (ör. speed_limit_h) → dict."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return {k: v for k, v in data.items() if k not in ("scene", "frame_size", "zones")}
 
 
 def check_frame_size(frame_size, frame):
@@ -139,6 +164,15 @@ def draw_zones(frame, zones, scale=1):
         bottom = z.polygon.bounds[3]                      # bounds = (minx, miny, maxx, maxy)
         cv2.putText(out, z.name, (int(p.x * scale) - round(30 * k), int(bottom * scale) - round(6 * k)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45 * k, ZONE_COLOR, line)
+        # Yön bölgesi: izinli yönleri bölgenin içinden çıkan oklarla göster. Açı görüntüde
+        # matematikteki gibi (0 sağ, 90 yukarı) → y ekseni aşağı baktığı için sin'in işareti ters.
+        c = z.polygon.representative_point()
+        for a in z.allowed_headings:
+            r = np.radians(a)
+            L = 40 * k
+            tip = (int(c.x * scale + L * np.cos(r)), int(c.y * scale - L * np.sin(r)))
+            cv2.arrowedLine(out, (int(c.x * scale), int(c.y * scale)), tip, ZONE_COLOR, 2 * line,
+                            tipLength=0.3)
     return out
 
 
@@ -150,12 +184,19 @@ def first_frame(source):
     raise IOError(f"Kaynakta kare yok: {source}")
 
 
-def draw_tool(source, scene_path, name, zone_type):
+def draw_tool(source, scene_path, name, zone_type, allowed_headings=None,
+              heading_tolerance=DEFAULT_HEADING_TOLERANCE, max_dwell_s=DEFAULT_MAX_DWELL_S):
     """İlk kareyi pencerede gösterir; fareyle köşeleri tıklatıp bölgeyi sahne dosyasına ekler.
 
     Sol tık: köşe ekle · Sağ tık / Backspace: son köşeyi sil · Enter: kaydet · Esc: vazgeç
     Küçük kareler (Ped1 158x238) ekranda büyütülerek gösterilir; tıklanan nokta kaydedilirken
     aynı oranla ORİJİNAL piksel koordinatına geri çevrilir.
+
+    Yön bölgesi (--type direction) ve --headings verilmediyse İKİ AŞAMA:
+      1) köşeler → Enter   2) izinli yön OKLARI: okun başına tıkla, sonra ucuna tıkla
+      (birden çok ok olabilir: çift yönlü yol için iki karşıt ok) → Enter ile kaydet.
+    Okun açısı iki noktadan hesaplanır: 0° sağ, 90° ekranda yukarı (görüntüde y aşağı arttığı
+    için dy'nin işareti ters çevrilir) — features.py'deki heading ile aynı tanım.
     """
     frame = first_frame(source)
     scale = max(1, round(600 / frame.shape[0]))      # ~600 piksel yüksekliğe büyüt
@@ -163,13 +204,33 @@ def draw_tool(source, scene_path, name, zone_type):
     scene_path = Path(scene_path)
     existing = load_zones(scene_path)[0] if scene_path.exists() else []
     points = []
+    arrows = []           # tamamlanmış oklar: [(baş, uç), ...] orijinal piksel
+    tail = []             # okun yalnız başı tıklandıysa: [baş]
+    # Aşama: "poly" (köşeler) → yön bölgesinde ve açı verilmediyse "arrow" (oklar)
+    need_arrows = zone_type == "direction" and not allowed_headings
+    phase = ["poly"]      # liste: iç fonksiyon (on_mouse) değiştirebilsin diye
+
+    def undo():
+        if phase[0] == "poly" and points:
+            points.pop()
+        elif phase[0] == "arrow":
+            if tail:
+                tail.pop()
+            elif arrows:
+                arrows.pop()
 
     def on_mouse(event, x, y, flags, param):
         # OpenCV fare olayında bu fonksiyonu çağırır; x, y büyütülmüş görüntüdeki piksel.
+        p = (round(x / scale, 1), round(y / scale, 1))
         if event == cv2.EVENT_LBUTTONDOWN:
-            points.append((round(x / scale, 1), round(y / scale, 1)))
-        elif event == cv2.EVENT_RBUTTONDOWN and points:
-            points.pop()
+            if phase[0] == "poly":
+                points.append(p)
+            elif not tail:
+                tail.append(p)                       # okun başı
+            else:
+                arrows.append((tail.pop(), p))       # okun ucu → ok tamam
+        elif event == cv2.EVENT_RBUTTONDOWN:
+            undo()
 
     win = f"Bolge: {name}  |  sol tik: kose  sag tik: geri al  Enter: kaydet  Esc: vazgec"
     # WINDOW_NORMAL: pencere boyutu elle ayarlanabilir olsun. WSLg bazen pencereyi ekran
@@ -186,15 +247,43 @@ def draw_tool(source, scene_path, name, zone_type):
             cv2.polylines(view, [pts], isClosed=len(points) >= 3, color=(0, 0, 255), thickness=2)
             for p in pts:
                 cv2.circle(view, tuple(int(v) for v in p), 4, (0, 0, 255), -1)
+        for a, b in arrows:
+            cv2.arrowedLine(view, (int(a[0] * scale), int(a[1] * scale)),
+                            (int(b[0] * scale), int(b[1] * scale)), (0, 255, 0), 3, tipLength=0.25)
+        for a in tail:
+            cv2.circle(view, (int(a[0] * scale), int(a[1] * scale)), 6, (0, 255, 0), -1)
+        hint = ("KOSELER: sol tik ekle, sag tik geri al, Enter bitir" if phase[0] == "poly" else
+                f"IZINLI YON: okun basina sonra ucuna tikla ({len(arrows)} ok), Enter kaydet")
+        cv2.putText(view, hint, (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
+        cv2.putText(view, hint, (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
         cv2.imshow(win, view)
         key = cv2.waitKey(30) & 0xFF                 # 30 ms bekle, basılan tuşu oku
         if key == 27:                                # Esc
             print("Vazgeçildi, bir şey kaydedilmedi.")
             break
-        if key == 8 and points:                      # Backspace
-            points.pop()
-        if key in (13, 10):                          # Enter
-            zone = Zone(name, zone_type, points)     # geçersizse burada hata verir
+        if key == 8:                                 # Backspace
+            undo()
+        if key in (13, 10) and phase[0] == "poly" and need_arrows:
+            try:
+                Zone(name, "restricted", points)     # köşeler geçerli mi?
+            except ValueError as err:
+                print("Geçersiz bölge:", err)        # pencere açık kalır, düzeltilebilir
+                continue
+            phase[0] = "arrow"                       # ikinci aşama: oklar
+            continue
+        if key in (13, 10):                          # Enter → kaydet
+            if need_arrows:
+                if not arrows:
+                    print("En az bir izinli yön oku çiz.")
+                    continue
+                # ok (baş → uç) → açı: 0° sağ, 90° yukarı; görüntüde y aşağı → -dy
+                allowed_headings = [round(float(np.degrees(np.arctan2(-(b[1] - a[1]), b[0] - a[0]))) % 360, 1)
+                                    for a, b in arrows]
+            try:
+                zone = Zone(name, zone_type, points, allowed_headings, heading_tolerance, max_dwell_s)
+            except ValueError as err:
+                print("Geçersiz bölge:", err)        # pencere açık kalır, düzeltilebilir
+                continue
             others = [z for z in existing if z.name != name]   # aynı adlı eski bölgenin yerine
             save_scene(scene_path, others + [zone], frame.shape[:2])
             print(f"Kaydedildi: {scene_path} → {zone}")
@@ -203,12 +292,26 @@ def draw_tool(source, scene_path, name, zone_type):
 
 
 def save_scene(path, zones, frame_size):
-    """Bölgeleri sahne dosyasına yazar (klasör yoksa oluşturur)."""
+    """Bölgeleri sahne dosyasına yazar (klasör yoksa oluşturur).
+
+    Dosya zaten varsa bölge dışındaki ayarları (ör. speed_limit_h) KORUR: yeni bir bölge
+    çizmek, elle yazılmış sahne ayarlarını silmesin.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = {"scene": path.stem, "frame_size": [int(v) for v in frame_size],
-            "zones": [{"name": z.name, "type": z.type, "points": [list(p) for p in z.points]}
-                      for z in zones]}
+    settings = load_scene_settings(path) if path.exists() else {}
+
+    def zone_dict(z):
+        d = {"name": z.name, "type": z.type, "points": [list(p) for p in z.points]}
+        if z.allowed_headings:
+            d["allowed_headings"] = z.allowed_headings
+            d["heading_tolerance"] = z.heading_tolerance
+        if z.type == "loiter":
+            d["max_dwell_s"] = z.max_dwell_s
+        return d
+
+    data = {"scene": path.stem, "frame_size": [int(v) for v in frame_size], **settings,
+            "zones": [zone_dict(z) for z in zones]}
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
@@ -239,6 +342,10 @@ def show(source, scene_path, out_path, features=None):
 # Kullanım:
 #   Bölge çiz (pencere açılır):
 #     python src/zones.py draw data/UCSDped1/Test/Test001 configs/zones/UCSDped1.json --name cimen_sag
+#     python src/zones.py draw data/Avenue/testing_videos/01.avi configs/zones/Avenue.json \
+#         --name akis --type direction --headings 0 180 --tolerance 60
+#     python src/zones.py draw data/MOT17/train/MOT17-09-FRCNN configs/zones/MOT17-09.json \
+#         --name vitrin_onu --type loiter --max-dwell 10
 #   Kontrol görseli (pencere gerekmez):
 #     python src/zones.py show data/UCSDped1/Test/Test001 configs/zones/UCSDped1.json
 #     python src/zones.py show data/UCSDped2/Test/Test001 configs/zones/UCSDped2.json \
@@ -250,6 +357,12 @@ if __name__ == "__main__":
     d.add_argument("source"); d.add_argument("scene")
     d.add_argument("--name", required=True, help="bölge adı (aynı ad varsa üzerine yazılır)")
     d.add_argument("--type", default="restricted", choices=ZONE_TYPES)
+    d.add_argument("--headings", type=float, nargs="+",
+                   help="yön bölgesi için izinli yönler (derece; 0 sağ, 90 yukarı, 180 sol, 270 aşağı)")
+    d.add_argument("--tolerance", type=float, default=DEFAULT_HEADING_TOLERANCE,
+                   help="izinli yönden kabul edilen sapma (derece)")
+    d.add_argument("--max-dwell", type=float, default=DEFAULT_MAX_DWELL_S,
+                   help="oyalanma bölgesinde izin verilen en uzun kalış (sn)")
     s = sub.add_parser("show", help="bölgeleri ilk kareye çizip resim kaydet")
     s.add_argument("source"); s.add_argument("scene")
     s.add_argument("--features", help="öznitelik CSV'si: ayak noktalarını içeride/dışarıda boya")
@@ -257,7 +370,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.cmd == "draw":
-        draw_tool(args.source, args.scene, args.name, args.type)
+        draw_tool(args.source, args.scene, args.name, args.type, args.headings, args.tolerance,
+                  args.max_dwell)
     else:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         show(args.source, args.scene, args.out, args.features)

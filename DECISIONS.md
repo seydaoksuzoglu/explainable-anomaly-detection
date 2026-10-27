@@ -246,3 +246,108 @@ ReID, birleşik yöntemler.
 Sahne: tesis güvenliği kameraları yüksekten bakar (hoca). Bizde de yüksek açılı MOT17-04'te IDF1
 0,585, alçak açılı MOT17-02'de 0,391 (OC-SORT) → takip değerlendirmesi yüksek açılı sahnelere
 (MOT17-04, Ped1/Ped2; aday MOT20) ağırlık verecek; alçak açılı sahneler zor durum testi olarak kalır.
+
+## Durum makinesi + debounce (histerezis), içeride başlayan iz ayrı olay (2026-10-27)
+Seçim: her (iz, bölge) için DIŞARIDA/İÇERİDE durumu; olay yalnız durum değişince. Giriş onayı:
+ayak noktası ≥ 0,15 boy içeride, kesintisiz 0,5 sn. Çıkış onayı: dışarıda (dist > 0) kesintisiz
+1 sn. Aradaki şerit durumu değiştirmez (histerezis). Olay türleri: "giris" (dışarıda görülmüş iz)
+ve "bolgede_goruldu" (iz bölgenin içinde başladı; kullanıcı kararı); durağan izler ikinciyi
+üretmez. Giriş zamanı = içeride kalmanın başladığı an; alarm zamanı = onay anı. Her olaya
+gerekçe cümlesi. ZoneState sınıfı geleceğe bakmaz → Faz 6'da canlı videoda da kullanılabilir.
+Neden: sınır titremesi ≤ ~0,07 boy (Test027 ID 2: 6 sahte "giriş"), gerçek girişler 0,24-0,95
+boy; süreler saniyede → fps'ten bağımsız; çıkış girişten uzun → içeride anlık kayıp olayı bölmez.
+Sonuç (Ped1, 36 klip, çimen): kare bazlı 441 alarm → 7 olay (%98 azalma; raporun İP7 ölçütü).
+7 olayın 5'i gözle doğrulanmış çimen girişi (Test009 bolgede_goruldu, 011, 013, 031×2), hepsi
+etiketli anomali karelerinde. 2'si kurala göre gerçek ama etikette yok: Test014 ID 16 çimen ucundan
+kestirme, Test018 ID 191 çimen kenarında ayak basıyor (0,27 boy). Derinlik eşiği 0,3'e çıkarılırsa
+bunlar elenir → bölge sahibinin "kenara basmak ihlal mi?" tercihine bağlı bir AYAR. Test027
+titremesi 0 olay; Ped2 direkleri 0 olay. Sentetik testler: titreme, 0,3 sn dalış → olay yok;
+içeride 0,5 sn çıkış → tek olay.
+
+## Videoda onaylı alarm: olaylar rules.py'den okunur, kırmızı + gerekçe şeridi (2026-10-27)
+Seçim: visualize.py --events <olay CSV>; alarm anından olay sonuna kadar kişi kalın kırmızı kutu
+ve kırmızı zeminli "GIRIS"/"BOLGEDE" etiketiyle; alt şeritte kısa gerekçe (ASCII). Turuncu ham
+"bölgede" kararı olarak kalır. Olay dosyasındaki ID videoda görülmezse uyarı.
+Neden: karar tek yerde (rules.py) → video yalnız gösterir, kural değişince tutarlı kalır; durağan
+işareti gibi iz düzeyi bilgiler kare kare videoda bilinemez. Araçlar da kırmızı → alarm dolgulu
+etiketle ayrılır. Test: Test011 k125 turuncu (aday) → k135 kırmızı "78 GIRIS"; Test027 titreme
+turuncu kalır, alarm yok; seçeneksiz video eskisiyle birebir aynı (Ped2 180/180).
+
+## Hız ve yön kuralları; ortak süreklilik mekanizması; eşik eğitim verisinden (2026-10-27)
+Seçim: Persistence sınıfı (koşul kesintisiz on_s sürünce olay, karşı koşul off_s sürünce biter;
+on/off ayrı → histerezis); 3.3'teki ZoneState bunun özel hali (Ped1 olayları birebir aynı kaldı).
+Hız: speed_h ≥ speed_limit_h, 1 sn. Eşik YALNIZ eğitim (normal) videolarından: rules.py
+--calibrate → hareketli yayaların %99 yüzdeliği; Avenue train = 0,87 boy/sn (%50 0,24; %99,9 1,26).
+Yön: direction türü bölge + izinli yönler (araçta OK çizerek; ±60° tolerans), kişi ≥ 0,2 boy/sn ve
+bölgede, sapma 1 sn sürmeli. İz uçlarının ilk/son 0,25 sn'si hız/yönde atlanır. Yön bölgeleri giriş
+olayı üretmez. save_scene sahne ayarlarını (speed_limit_h) korur.
+Neden: tek mekanizma = tek açıklama; eşiği testten seçmek veri sızıntısı olurdu; kullanıcı yönü
+açıyla değil okla düşünür (kullanıcı önerisi).
+Avenue test (21 klip, geçici yön bölgesi tüm yürüme alanı, izinli 0°/180°):
+  süreklilik 1,0 sn: hız 13 olay, %69'u anomali karesinde, 27 anomali izinin 7'si (koşanlar);
+                     yön 2 olay, 0 doğru.
+  0,7 sn: hız 19 (%63, 8 iz), yön 8 (%25, 1 iz) · 0,5 sn: hız 40 (%50, 9 iz), yön 25 (%16, 1 iz)
+  → 1,0 sn kalıyor (alarm yorgunluğu projenin tezi; kısaltmak sahte alarmı 3 katına çıkarıyor).
+  Çimen bölgesi: kare bazlı 1571 alarm → 0 olay (derin giriş yok, doğru).
+Yön kuralı Avenue'da zayıf, mekanizma doğru (sentetik: sağa/sola/45° serbest, aşağı yakalanır,
+yavaş ve 0,8 sn'lik hareket elenir). Nedenler: (1) izler parçalı — kameraya yürüyen anomali izleri
+1-1,5 sn, uçlar atılınca 1 sn'ye ulaşmıyor; (2) Avenue'da istasyona giren/çıkan normal yayalar da
+dikey yürüyor (126 normal iz) → "dikey = ihlal" sahnenin gerçek kuralı değil; yön etiketli
+anomaliler belirli kişilere özgü. → Yön kuralı senaryo testiyle (ör. tek yönlü koridor) doğrulanmalı;
+ilerlemesi takip iyileştirmesine bağlı (Ertelenen iş). Hız sahte alarmlarından biri: kadraj
+kenarında yarım görünen oturan kişi (kutu küçük → boy/sn şişiyor).
+Not: trajectory.py adlandırması Avenue train/test'i çakıştırıyor (ikisi de Avenue_01.csv) →
+eğitim çıktıları ayrı klasöre yazılmalı (ya da ad düzeltilmeli).
+
+## Yön kuralının anlamı: "geçişte ters yön"; veri setlerinde gerçek tek yönlü geçiş yok (2026-10-27)
+Kullanım: direction bölgesi bir GEÇİŞ noktası (kapı, turnike, merdiven, tek yönlü koridor) olarak
+çizilir, izinli yön tek okla verilir (ör. yalnız içeri); okun tersine geçen = "ters yönden geçiş".
+Yasak bölge (çimen) bundan ayrı: oraya hangi yönden girilirse girilsin alarm.
+Bulgu: MOT17-09 kapısında 17 sn'de yalnız 2 kişi, ikisi de çok yavaş (0,11-0,13 boy/sn < 0,2) →
+olay yok (doğru). Avenue eğitim (normal) videolarında istasyona giriş (971 satır) ve çıkış (1253)
+AYNI yerlerden (sol merdiven, turnikeler) → Avenue'da tek yönlü geçiş kuralı yok; konursa normal
+çıkanlara alarm verir. → Yön kuralı veri seti etiketleriyle değil, bölge sahibinin tanımladığı
+SENARYO ile gösterilir/ölçülür (ör. "merdiven yalnız çıkış"; ya da kendi çekilecek senaryo videosu).
+rules.py: eski öznitelik dosyasında (3.2 öncesi) açık hata mesajı verir.
+
+## Avenue yön senaryosu ve alarm şeridinin tutulması (2026-10-28)
+Kullanıcı Avenue'da sol merdivenin önüne yön bölgesi çizdi (akis, tek ok 342° = "merdiven yalnız
+çıkış"). 21 klipte 34 YON olayı: merdivene doğru (~180°, sola) yürüyenler — senaryoya göre doğru.
+Bu bir SENARYO kuralı (veri seti etiketi değil). Videoda alarm şeridi onaydan sonra en az 2 sn
+gösterilir: birçok olay iz koparken/kadrajdan çıkarken onaylanıyor (ör. Avenue 03 ID 265 hız
+alarmı izin son karesinde) ve aksi halde tek karede görünüp kayboluyordu.
+
+## Yön kuralında süre yerine katedilen yol (2026-10-28)
+Seçim: yön ihlali, yasak yönde kesintisiz en az 0,2 boy İLERLEME ile onaylanır (Persistence'a
+"miktar" eklendi: varsayılan süre, yön kuralında hız × Δt). Hız kuralı (1 sn) ve bölge girişi
+(0,5 sn) süre bazlı kalır.
+Neden (kullanıcı): "iniş yasaksa ne kadar sürede indiği önemli değil" — süre şartı hızlı geçeni
+kaçırır (koşarak inen < 1 sn). Yol şartı titremeyi yine süzer (yerinde titreyen kutu yol biriktirmez).
+Ölçüm (Avenue, kullanıcının merdiven bölgesi, ok 127° = yalnız çıkış; 21 klip):
+  süre 1,0 sn: iniş 31/75 · süre 0,5: 43/75 · süre 0,3: 47/75 ama çıkana 1 sahte
+  yol 0,5 boy: 25/75 (merdivende medyan 0,3 boy/sn → 0,5 boy ≈ 1,7 sn, daha katı) · yol 0,3: 36/75
+  yol 0,2 boy: 43/75, çıkana 0 · yol 0,15: 45/75, çıkana 0 → 0,2 seçildi.
+Klip 15 kaçırılanları (19 inişten 10): 7'si bölgede < 1 sn görünüyor (kadraj kenarı / iz kopması),
+2'si kesintili ihlal, 1'i çok yavaş → kalan kayıp büyük ölçüde takip kalitesi (Ertelenen iş).
+Ped1 bölge olayları ve Avenue hız olayları değişmedi (regresyon).
+
+## Oyalanma kuralı (3.4b) (2026-10-28)
+Seçim: loiter türü bölgede giriş alarmı YOK; 3.3'ün giriş/çıkış olayının süresi bölgenin
+max_dwell_s sınırını (varsayılan 10 sn, bölge başına, araçta --max-dwell) aşarsa "oyalanma".
+Alarm anı = giriş + sınır (ilk gözlem). İz bölgenin içinde başladıysa süre "en az" kabul edilir,
+gerekçede "gerçek süre daha uzun olabilir" yazar. Durağan iz içeride başlıyorsa yine atlanır.
+Neden: oyalanma girmek değil fazla kalmaktır; sınır yere göre değişir (ATM önü ≠ bekleme salonu);
+debounce'lu giriş/çıkış sayesinde sınırda titreyen kişide süre sıfırlanmaz (sentetik test).
+Sentetik: 15 sn → alarm 12 sn (giriş 2 + 10); 6 sn → yok; 0,3 sn dışarı titreme → tek olay 15 sn;
+baştan içeride 12 sn → alarm 10 sn. Avenue test bölgesi (turnike önü, 10 sn): 7 olay, hepsi
+turnike önünde bekleyen kişiler. Sınırlılık: iz koparsa (ID değişirse) kalış süresi bölünür →
+oyalanma iz parçalanmasından en çok etkilenen kural (Avenue ort. iz ömrü 1,9 sn). Ped1 / Avenue
+hız ve yön olayları değişmedi (regresyon).
+
+## Faz 3 kapanışı: bütün kural olayları tek tabloda (3.5) (2026-10-28)
+Seçim: rules.py klip başına olay dosyasına ek olarak <out-dir>/<sahne>_tum_olaylar.csv yazar
+(clip sütunu + aynı şema) ve kural × bölge özeti basar (olay, klip sayısı, ortalama süre).
+Neden: Kanal A'nın tek çıktısı; Faz 5 füzyonu ve Faz 6 olay günlüğü (SQLite) tek tablo okur.
+Avenue (kullanıcının bölgeleri): 65 olay / 16 klip — hız 13, yön 44 (merdiven), oyalanma 8
+(turnike önü), çimen girişi 0 (kare bazlı 1571 → 0). Ped1: 7 olay (6 giriş + 1 bolgede_goruldu).
+Çıktı klasör düzeni Faz 4'ün ilk adımına taşındı (train/test öznitelikleri ayrı okunacak).
